@@ -17,12 +17,11 @@ that says nothing.  Tests here guard the contract, not the ML quality.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 # Bootstrap full import chain to avoid circular-import errors that arise when
 # importing app.ai.rag before app.db.base has finished its registration block.
 import app.main  # noqa: F401 (side-effect: registers all ORM models)
-
-from unittest.mock import AsyncMock
-
 from app.ai.rag import NO_CONTEXT_ANSWER, RagService, RetrievedChunk
 from app.api.schemas import Citation
 from app.core.config import get_settings

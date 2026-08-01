@@ -19,8 +19,6 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import pytest
-
 from app.core.config import get_settings
 from app.workers.connector_delivery import (
     DeliveryReceipt,
@@ -186,5 +184,5 @@ class TestRetryDelaySchedule:
 
     def test_delay_is_non_decreasing(self) -> None:
         delays = [retry_delay(i).total_seconds() for i in range(1, 12)]
-        for earlier, later in zip(delays, delays[1:]):
+        for earlier, later in zip(delays, delays[1:], strict=False):
             assert later >= earlier

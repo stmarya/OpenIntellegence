@@ -16,3 +16,8 @@ dist/
 build/
 .coverage
 htmlcov/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/

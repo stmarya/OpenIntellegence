@@ -207,3 +207,127 @@ Go endpoint agent lives in a separate repository.
 Tests cover normalisation and the security primitives. The connectors and
 HTTP layer are not yet covered by integration tests against recorded
 fixtures.
+
+---
+
+## Frontend (phases 7–9 — dev preview only)
+
+> **Not production-ready.** The frontend ships a mock API adapter so every
+> page can be developed and reviewed without a live backend. All pages clearly
+> indicate when mock data is active. No security data is fabricated; unknown
+> values stay unknown.
+
+### Technology
+
+| Concern | Choice |
+|---|---|
+| Framework | Next.js 15, App Router, TypeScript |
+| Styling | Tailwind CSS 4 + CSS custom properties |
+| Design language | Dense dark enterprise UI: teal `#16A9A0`, 13 px base, 4 px radius, 120 ms motion, no decorative shadows |
+| API adapter | `src/lib/api/` — real HTTP client + deterministic mock with simulated latency |
+
+### Pages
+
+| Route | Purpose |
+|---|---|
+| `/dashboard` | KPI summary — critical CVEs, open alerts, exposed assets, critical correlations |
+| `/explorer` | Full vulnerability catalogue with KEV and CVSS filters |
+| `/assets` | Endpoint inventory with exposure and last-seen data |
+| `/alerts` | Alert triage queue with provenance banner when feeds are degraded |
+| `/correlations` | Risk-scored evidence correlations with automation candidates |
+| `/cases` | Active investigations / case tracking |
+| `/automation` | Playbooks and automation-run history |
+| `/reports` | Generated intelligence reports |
+| `/analyst` | RAG-grounded AI analyst chat; never answers from general knowledge |
+
+### Run the frontend
+
+```bash
+cd frontend
+npm install
+npm run dev       # http://localhost:3000  (mock mode by default)
+```
+
+To connect to a live backend:
+
+```bash
+NEXT_PUBLIC_API_BASE=http://localhost:8000 \
+NEXT_PUBLIC_USE_MOCK=false \
+npm run dev
+```
+
+### Build & lint
+
+```bash
+cd frontend
+npm run build     # production build
+npm run lint      # ESLint
+```
+
+### Run with Docker Compose
+
+```bash
+# Start full stack including mock-connector and frontend:
+docker compose up
+
+# Backend only:
+docker compose up postgres redis api
+```
+
+---
+
+## Dev validation boundaries
+
+This section documents what the test suite covers and what it does not,
+so CI failures are diagnosed correctly.
+
+### What is tested (no external services required)
+
+| Test file | What it covers |
+|---|---|
+| `test_alembic_lineage.py` | Single-head migration chain, all 7 revisions present |
+| `test_api_contract.py` | All expected endpoint families registered in the OpenAPI schema |
+| `test_connector_delivery.py` | Slack ADF format, retry delay bounds, retryable status codes |
+| `test_health.py` | `/health` liveness, `/health/ready` degraded-gracefully response, timing header |
+| `test_normalize.py` | Timestamp parsing (4 feed formats), CVE extraction, CVSS validation, victim normalisation |
+| `test_outbox.py` | DeliveryWorker state machine: delivered → delivered; retryable under max → retry; retryable at max → dead\_letter; non-retryable → dead\_letter; unknown action → dead\_letter |
+| `test_rag_citations.py` | No-context refusal string returned; citations match retrieved chunks; CVSS unknown → null (not 0.0); unconfigured LLM → evidence listing, not error |
+| `test_schema_contract.py` | ORM column presence, unique constraints |
+| `test_security.py` | API key generation, parsing, Argon2 verification, scope model, in-memory rate limiter |
+| `test_tenant_safety.py` | Auth required on every data endpoint; 403 for missing scope; tenant\_id injected by all route modules |
+
+### What is NOT tested here
+
+- Real database writes and reads (no test database is started by the test suite).
+- Feed HTTP calls to external APIs.
+- LLM completions.
+- mTLS endpoint agent certificate issuance.
+- Frontend browser behaviour.
+
+### Run backend tests
+
+```bash
+# Install dev dependencies:
+pip install -e ".[dev]"
+
+# Run all tests (no external services needed):
+python -m pytest tests/ -v
+
+# Run a specific group:
+python -m pytest tests/test_outbox.py tests/test_rag_citations.py -v
+```
+
+### Mock connector
+
+`docker compose up mock-connector` starts a MockServer instance on port 1080
+pre-configured with Slack webhook, Jira, and SIEM endpoints. Pass
+`X-Mock-Status: 503` to simulate retryable failures. Configuration lives in
+`dev/mock-connector/mock-connector.json`.
+
+Point connector settings at the mock:
+
+```
+SLACK_WEBHOOK_URL=http://localhost:1080/mock/slack/webhook
+JIRA_BASE_URL=http://localhost:1080/mock/jira
+SIEM_WEBHOOK_URL=http://localhost:1080/mock/siem/events
+```

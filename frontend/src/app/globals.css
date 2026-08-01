@@ -1,26 +1,65 @@
 @import "tailwindcss";
 
+/* GravityZone-style design tokens
+   Dense dark enterprise UI, teal #16A9A0, 13px base, 4px radius, 120ms motion
+*/
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg-base:        #0f1117;
+  --bg-surface:     #181c27;
+  --bg-raised:      #1e2333;
+  --bg-overlay:     #252b3b;
+  --border:         #2a3045;
+  --border-subtle:  #1e2333;
+
+  --text-primary:   #e8eaf0;
+  --text-secondary: #8b92a9;
+  --text-muted:     #5a617a;
+
+  --teal:           #16A9A0;
+  --teal-dim:       #0f7a73;
+  --teal-glow:      rgba(22,169,160,0.15);
+
+  --red:            #e05454;
+  --amber:          #d97706;
+  --green:          #22c55e;
+  --blue:           #3b82f6;
+
+  --radius:         4px;
+  --font-size-base: 13px;
+  --transition:     120ms ease;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  font-size: var(--font-size-base);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+               Roboto, "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
+
+a {
+  color: var(--teal);
+  text-decoration: none;
+  transition: color var(--transition);
+}
+
+a:hover {
+  color: #1fcfc5;
+}
+
+/* Scrollbar — thin, dark-themed */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
