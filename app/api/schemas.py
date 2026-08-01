@@ -187,6 +187,7 @@ class ExposureItem(BaseModel):
     is_kev: bool
     exploit_maturity: str
     matched_via: str
+    match_evidence: str | None = None
     detected_at: datetime
     sla_due_at: datetime | None = None
     sla_breached: bool = False
@@ -264,6 +265,69 @@ class HeartbeatResponse(BaseModel):
     next_heartbeat_seconds: int
     certificate_expires_at: datetime | None = None
     certificate_renewal_due: bool = False
+
+
+class AlertEvaluationRequest(BaseModel):
+    tenant_id: str | None = None
+    rule_id: int | None = None
+
+
+class AlertEvaluationRunOut(ORMModel):
+    id: int
+    tenant_id: str | None = None
+    triggered_by: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    evaluated_rules: int
+    triggered_alerts: int
+    failed_rules: int
+    detail: dict = Field(default_factory=dict)
+
+
+class CorrelationRequest(BaseModel):
+    primary_entity_type: str
+    primary_entity_id: str
+    caller_evidence: dict = Field(default_factory=dict)
+
+
+class CorrelationResponse(BaseModel):
+    score: int
+    evidence: dict = Field(default_factory=dict)
+
+
+class ConnectorCapability(BaseModel):
+    action: str
+    connector: str
+    kind: str
+    rate_limit_per_minute: int
+    supported: bool
+    deliverable: bool
+    reason: str | None = None
+
+
+class OutboxEnqueueRequest(BaseModel):
+    action: str
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    payload: dict = Field(default_factory=dict)
+
+
+class OutboxMessageOut(ORMModel):
+    id: int
+    action: str
+    state: str
+    idempotency_key: str
+    attempts: int
+    delivered_at: datetime | None = None
+    replayed_from_id: int | None = None
+
+
+class OutboxStatusResponse(BaseModel):
+    queued: int = 0
+    delivering: int = 0
+    retry: int = 0
+    delivered: int = 0
+    dead_letter: int = 0
 
 
 # --------------------------------------------------------------------------

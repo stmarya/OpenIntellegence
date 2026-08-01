@@ -207,3 +207,19 @@ Go endpoint agent lives in a separate repository.
 Tests cover normalisation and the security primitives. The connectors and
 HTTP layer are not yet covered by integration tests against recorded
 fixtures.
+
+---
+
+## Operations additions (P0 hardening)
+
+- **Alert evaluation worker (run-once):**
+  - `python -m app.workers.alert_eval --triggered-by ops`
+  - Optional scoping: `--tenant-id <tenant_uuid>` and `--rule-id <rule_id>`
+- **Custom alert condition format:** JSON object with `metric`, `op`, `value`.
+  Supported `op`: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`.
+- **Connector capabilities endpoint:** `GET /api/v1/connectors/capabilities`
+  returns action support and delivery readiness without exposing secrets.
+- **Outbox observability:** `GET /api/v1/outbox/status` returns queued,
+  delivering, retry, delivered, dead-letter counters.
+- **Dead-letter replay constraints:** replay is authorized via admin scope and
+  only allowed for dead-letter messages that have not already been delivered.

@@ -154,6 +154,7 @@ async def asset_exposure(
             is_kev=vuln.is_kev,
             exploit_maturity=vuln.exploit_maturity.value,
             matched_via=exposure.matched_via,
+            match_evidence=exposure.match_evidence,
             detected_at=exposure.detected_at,
             sla_due_at=exposure.sla_due_at,
             sla_breached=bool(exposure.sla_due_at and exposure.sla_due_at < now),

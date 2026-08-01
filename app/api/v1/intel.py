@@ -10,6 +10,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.schemas import (
+    CorrelationRequest,
+    CorrelationResponse,
     IndicatorOut,
     ListResponse,
     Page,
@@ -26,6 +28,7 @@ from app.db.models import (
     ThreatActor,
     Vulnerability,
 )
+from app.services.correlation import correlate_entity
 from app.services.provenance import build_provenance
 
 router = APIRouter()
@@ -334,3 +337,23 @@ async def summary(db: DbSession, principal: ReadPrincipal) -> dict:
         },
         "provenance": await build_provenance(db, sources=None),
     }
+
+
+@router.post(
+    "/correlation/evaluate",
+    response_model=CorrelationResponse,
+    summary="Evaluate entity correlation with server-resolved evidence",
+)
+async def evaluate_correlation(
+    payload: CorrelationRequest,
+    db: DbSession,
+    principal: ReadPrincipal,
+) -> CorrelationResponse:
+    result = await correlate_entity(
+        db,
+        tenant_id=principal.tenant_id,
+        primary_entity_type=payload.primary_entity_type,
+        primary_entity_id=payload.primary_entity_id,
+        caller_evidence=payload.caller_evidence,
+    )
+    return CorrelationResponse(score=result.score, evidence=result.evidence)

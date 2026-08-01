@@ -9,19 +9,41 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 
 from app.api.schemas import (
+    AlertEvaluationRequest,
+    AlertEvaluationRunOut,
     ApiKeyCreate,
     ApiKeyCreated,
     ApiKeyOut,
+    ConnectorCapability,
     FeedStatus,
     ListResponse,
+    OutboxEnqueueRequest,
+    OutboxMessageOut,
+    OutboxStatusResponse,
     Page,
 )
 from app.core.config import get_settings
 from app.core.deps import DbSession, Principal, Scope, require_scope
 from app.core.security import generate_key
-from app.db.models import ApiKey, ApiKeyStatus, AuditLog, QuarantinedRecord, SourceRun
+from app.db.models import (
+    AlertEvaluationRun,
+    ApiKey,
+    ApiKeyStatus,
+    AuditLog,
+    OutboxMessage,
+    QuarantinedRecord,
+    SourceRun,
+)
 from app.ingest.base import registry
 from app.ingest.pipeline import IngestPipeline
+from app.services.alerts import evaluate_alert_rules
+from app.services.outbox import (
+    connector_capabilities,
+    enqueue_outbox_message,
+    ensure_action_supported,
+    outbox_state_counts,
+    replay_dead_letter,
+)
 from app.services.provenance import feed_statuses
 
 router = APIRouter()
@@ -216,6 +238,16 @@ async def feeds(db: DbSession, principal: ReadPrincipal) -> list[FeedStatus]:
     return await feed_statuses(db)
 
 
+@router.get(
+    "/connectors/capabilities",
+    response_model=list[ConnectorCapability],
+    summary="Connector action capabilities and delivery readiness",
+)
+async def capabilities(principal: ReadPrincipal) -> list[ConnectorCapability]:
+    capabilities = await connector_capabilities(get_settings())
+    return [ConnectorCapability.model_validate(row) for row in capabilities]
+
+
 @router.get("/quarantine", summary="Records rejected during normalisation")
 async def quarantine(
     db: DbSession,
@@ -325,3 +357,117 @@ async def runs(
             for r in rows
         ]
     }
+
+
+@router.post(
+    "/alerts/evaluate",
+    response_model=AlertEvaluationRunOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Run alert-rule evaluation once",
+)
+async def evaluate_alerts_once(
+    payload: AlertEvaluationRequest,
+    db: DbSession,
+    principal: AdminPrincipal,
+) -> AlertEvaluationRunOut:
+    run = await evaluate_alert_rules(
+        db,
+        triggered_by=f"api_key:{principal.api_key_id}",
+        tenant_id=payload.tenant_id,
+        rule_id=payload.rule_id,
+    )
+    return AlertEvaluationRunOut.model_validate(run)
+
+
+@router.get(
+    "/alerts/evaluation-runs",
+    response_model=list[AlertEvaluationRunOut],
+    summary="Recent alert evaluation runs",
+)
+async def alert_evaluation_runs(
+    db: DbSession,
+    principal: AdminPrincipal,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[AlertEvaluationRunOut]:
+    stmt = (
+        select(AlertEvaluationRun)
+        .where(
+            (AlertEvaluationRun.tenant_id == principal.tenant_id)
+            | (AlertEvaluationRun.tenant_id.is_(None))
+        )
+        .order_by(AlertEvaluationRun.started_at.desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [AlertEvaluationRunOut.model_validate(row) for row in rows]
+
+
+@router.post(
+    "/outbox/messages",
+    response_model=OutboxMessageOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue approved connector action",
+)
+async def enqueue_connector_action(
+    payload: OutboxEnqueueRequest,
+    db: DbSession,
+    principal: AdminPrincipal,
+) -> OutboxMessageOut:
+    await ensure_action_supported(db, get_settings(), payload.action)
+    message = await enqueue_outbox_message(
+        db,
+        tenant_id=principal.tenant_id,
+        action=payload.action,
+        payload=payload.payload,
+        idempotency_key=payload.idempotency_key,
+        approved_by=str(principal.api_key_id),
+    )
+    return OutboxMessageOut.model_validate(message)
+
+
+@router.get("/outbox/status", response_model=OutboxStatusResponse, summary="Outbox state counters")
+async def outbox_status(db: DbSession, principal: ReadPrincipal) -> OutboxStatusResponse:
+    return OutboxStatusResponse.model_validate(await outbox_state_counts(db, principal.tenant_id))
+
+
+@router.get(
+    "/outbox/dead-letter",
+    response_model=list[OutboxMessageOut],
+    summary="List dead-letter outbox messages",
+)
+async def dead_letter_messages(
+    db: DbSession,
+    principal: AdminPrincipal,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[OutboxMessageOut]:
+    rows = (
+        await db.execute(
+            select(OutboxMessage)
+            .where(
+                OutboxMessage.tenant_id == principal.tenant_id,
+                OutboxMessage.state == "dead_letter",
+            )
+            .order_by(OutboxMessage.updated_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return [OutboxMessageOut.model_validate(row) for row in rows]
+
+
+@router.post(
+    "/outbox/dead-letter/{message_id}/replay",
+    response_model=OutboxMessageOut,
+    summary="Replay one dead-letter message",
+)
+async def replay_dead_letter_message(
+    message_id: int,
+    db: DbSession,
+    principal: AdminPrincipal,
+) -> OutboxMessageOut:
+    replayed = await replay_dead_letter(
+        db,
+        tenant_id=principal.tenant_id,
+        message_id=message_id,
+        actor_id=str(principal.api_key_id),
+    )
+    return OutboxMessageOut.model_validate(replayed)

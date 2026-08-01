@@ -96,6 +96,23 @@ class ReportStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class AlertTriggerType(str, enum.Enum):
+    KEV_EXPOSURE = "kev_exposure"
+    IOC_SIGHTING = "ioc_sighting"
+    AGENT_STALE = "agent_stale"
+    RANSOMWARE_RELEVANCE = "ransomware_relevance"
+    FEED_DEGRADED = "feed_degraded"
+    CUSTOM = "custom"
+
+
+class OutboxState(str, enum.Enum):
+    QUEUED = "queued"
+    DELIVERING = "delivering"
+    RETRY = "retry"
+    DELIVERED = "delivered"
+    DEAD_LETTER = "dead_letter"
+
+
 # ==========================================================================
 # Tenancy
 # ==========================================================================
@@ -420,6 +437,7 @@ class AssetExposure(Base, TimestampMixin):
     )
 
     matched_via: Mapped[str] = mapped_column(String(32), nullable=False)
+    match_evidence: Mapped[str | None] = mapped_column(Text)
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sla_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -462,6 +480,153 @@ class Agent(Base, TimestampMixin):
 
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revocation_reason: Mapped[str | None] = mapped_column(String(255))
+
+
+# ==========================================================================
+# Alerts, correlation and orchestration outbox
+# ==========================================================================
+
+
+class AlertRule(Base, TimestampMixin):
+    __tablename__ = "alert_rules"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(
+        UuidType, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    trigger_type: Mapped[AlertTriggerType] = mapped_column(String(32), nullable=False, index=True)
+    condition: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+    cooldown_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(255))
+
+
+class AlertHistory(Base, TimestampMixin):
+    __tablename__ = "alert_history"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(
+        UuidType, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rule_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("alert_rules.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    fingerprint: Mapped[str] = mapped_column(String(255), nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="triggered")
+    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "rule_id", "fingerprint", name="uq_alert_history_fingerprint"
+        ),
+    )
+
+
+class Alert(Base, TimestampMixin):
+    __tablename__ = "alerts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(
+        UuidType, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rule_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("alert_rules.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    fingerprint: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="open", nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    detail: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "rule_id", "fingerprint", "status", name="uq_alert_open"),
+    )
+
+
+class AlertEvaluationRun(Base, TimestampMixin):
+    __tablename__ = "alert_evaluation_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str | None] = mapped_column(UuidType, index=True)
+    triggered_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[RunStatus] = mapped_column(
+        String(16), default=RunStatus.RUNNING, nullable=False, index=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    evaluated_rules: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    triggered_alerts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_rules: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    detail: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+
+
+class CorrelationRecord(Base, TimestampMixin):
+    __tablename__ = "correlation_records"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(
+        UuidType, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    primary_entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    primary_entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+    analyst_context: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_correlation_records_entity",
+            "tenant_id",
+            "primary_entity_type",
+            "primary_entity_id",
+        ),
+    )
+
+
+class OutboxMessage(Base, TimestampMixin):
+    __tablename__ = "outbox_messages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(
+        UuidType, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+    state: Mapped[OutboxState] = mapped_column(
+        String(24), default=OutboxState.QUEUED, nullable=False, index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    approved_by: Mapped[str | None] = mapped_column(String(255))
+    replayed_from_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "idempotency_key",
+            "state",
+            name="uq_outbox_tenant_idempotency_state",
+        ),
+    )
+
+
+class OutboxReceipt(Base, TimestampMixin):
+    __tablename__ = "outbox_receipts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    outbox_message_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("outbox_messages.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        UuidType, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(255))
+    detail: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
 
 
 # ==========================================================================
