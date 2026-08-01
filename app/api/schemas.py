@@ -13,7 +13,7 @@ Two conventions run through this file:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Generic, Literal, TypeVar
+from typing import Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -56,7 +56,7 @@ class Page(BaseModel):
     has_more: bool
 
 
-class ListResponse(BaseModel, Generic[T]):
+class ListResponse[T](BaseModel):
     data: list[T]
     page: Page
     provenance: Provenance
@@ -295,9 +295,7 @@ class ApiKeyCreate(BaseModel):
 class ApiKeyCreated(ApiKeyOut):
     #: Returned exactly once, at creation. Never retrievable again.
     raw_key: str
-    warning: str = (
-        "Store this key now. It is hashed with Argon2id and cannot be shown again."
-    )
+    warning: str = "Store this key now. It is hashed with Argon2id and cannot be shown again."
 
 
 # --------------------------------------------------------------------------
