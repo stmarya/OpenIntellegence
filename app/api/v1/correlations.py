@@ -103,7 +103,8 @@ async def get_correlation(correlation_id: str, db: DbSession, principal: ReadPri
 
 
 @router.post("/correlations/{correlation_id}/ai-brief", response_model=AiBriefOut, status_code=status.HTTP_201_CREATED, summary="Generate cited AI analyst brief")
-async def generate_ai_brief(correlation_id: str, db: DbSession, principal: ReadPrincipal) -> AiBriefOut:
+async def generate_ai_brief(correlation_id: str, db: DbSession, principal: WritePrincipal) -> AiBriefOut:
+    """Generate and persist a cited brief; this is intentionally a write action."""
     item = (await db.execute(select(Correlation).where(Correlation.id == correlation_id, Correlation.tenant_id == principal.tenant_id))).scalar_one_or_none()
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Correlation not found.")
