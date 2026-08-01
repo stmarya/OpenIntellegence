@@ -1,0 +1,90 @@
+[
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/mock/slack/webhook",
+      "headers": {
+        "X-Mock-Status": ["503"]
+      }
+    },
+    "httpResponse": {
+      "statusCode": 503,
+      "body": "Service Unavailable"
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/mock/slack/webhook"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "body": "ok"
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/mock/jira/rest/api/3/issue",
+      "headers": {
+        "X-Mock-Status": ["400"]
+      }
+    },
+    "httpResponse": {
+      "statusCode": 400,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": "{\"errorMessages\":[\"Project does not exist.\"],\"errors\":{}}"
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/mock/jira/rest/api/3/issue"
+    },
+    "httpResponse": {
+      "statusCode": 201,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": "{\"id\":\"10001\",\"key\":\"TEST-1\",\"self\":\"http://mock/jira/rest/api/3/issue/10001\"}"
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/mock/siem/events",
+      "headers": {
+        "X-Mock-Status": ["503"]
+      }
+    },
+    "httpResponse": {
+      "statusCode": 503,
+      "body": "Service Unavailable"
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/mock/siem/events"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": "{\"status\":\"accepted\",\"event_id\":\"mock-evt-001\"}"
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/mockserver/status"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "body": "ok"
+    }
+  }
+]

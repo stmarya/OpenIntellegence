@@ -77,14 +77,14 @@ class TestVerification:
         key = generate_key()
         parts = parse_key(key.raw_key)
         assert parts is not None
-        assert verify_secret(key.secret_hash, parts.secret) is True
+        assert verify_secret(parts.secret, key.secret_hash) is True
 
     def test_wrong_secret_rejected(self) -> None:
         key = generate_key()
         other = generate_key()
         other_parts = parse_key(other.raw_key)
         assert other_parts is not None
-        assert verify_secret(key.secret_hash, other_parts.secret) is False
+        assert verify_secret(other_parts.secret, key.secret_hash) is False
 
     def test_same_secret_hashes_differently_each_time(self) -> None:
         """Argon2 salts per hash, so identical secrets must not collide."""
@@ -100,6 +100,7 @@ class TestScopes:
         return Principal(
             api_key_id="key-1",
             tenant_id="tenant-1",
+            name="test-key",
             scopes=set(scopes),
             rate_limit_per_hour=1000,
         )

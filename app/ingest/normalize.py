@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from dateutil import parser as date_parser
@@ -45,16 +45,19 @@ NAIVE_SOURCE_TIMEZONES: dict[str, str] = {
 }
 
 # ``dateutil`` refuses to resolve bare zone abbreviations without a hint.
+# CET/CEST are given as fixed offsets so that the same abbreviation always
+# resolves the same way regardless of when the worker runs, avoiding
+# DST-sensitive output when the feed writes the abbreviation explicitly.
 _TZ_ABBREVIATIONS = {
     "UTC": tz.UTC,
     "GMT": tz.UTC,
-    "CET": tz.gettz("Europe/Paris"),
-    "CEST": tz.gettz("Europe/Paris"),
-    "EST": tz.gettz("America/New_York"),
-    "EDT": tz.gettz("America/New_York"),
-    "PST": tz.gettz("America/Los_Angeles"),
-    "PDT": tz.gettz("America/Los_Angeles"),
-    "WIB": tz.gettz("Asia/Jakarta"),
+    "CET": timezone(timedelta(hours=1)),
+    "CEST": timezone(timedelta(hours=2)),
+    "EST": timezone(timedelta(hours=-5)),
+    "EDT": timezone(timedelta(hours=-4)),
+    "PST": timezone(timedelta(hours=-8)),
+    "PDT": timezone(timedelta(hours=-7)),
+    "WIB": timezone(timedelta(hours=7)),
 }
 
 
@@ -188,7 +191,7 @@ def strip_status_prefix(name: str) -> tuple[str, str | None]:
     match = _STATUS_PREFIX.match(name)
     if not match:
         return name.strip(), None
-    return name[match.end() :].strip(), match.group(1).strip().lower()
+    return name[match.end() :].strip(), match.group(1).strip().upper()
 
 
 def extract_domain(value: str) -> str | None:
