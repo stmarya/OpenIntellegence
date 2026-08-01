@@ -16,7 +16,6 @@ JsonType = __import__("sqlalchemy").JSON().with_variant(JSONB(), "postgresql")
 
 class AutomationPlaybook(Base, TimestampMixin):
     __tablename__ = "automation_playbooks"
-
     id: Mapped[str] = mapped_column(UuidType, primary_key=True, server_default=func.uuid_generate_v4())
     tenant_id: Mapped[str] = mapped_column(UuidType, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -29,7 +28,6 @@ class AutomationPlaybook(Base, TimestampMixin):
 class AutomationRun(Base, TimestampMixin):
     __tablename__ = "automation_runs"
     __table_args__ = (UniqueConstraint("tenant_id", "idempotency_key", name="uq_automation_runs_tenant_key"),)
-
     id: Mapped[str] = mapped_column(UuidType, primary_key=True, server_default=func.uuid_generate_v4())
     tenant_id: Mapped[str] = mapped_column(UuidType, nullable=False, index=True)
     playbook_id: Mapped[str] = mapped_column(UuidType, ForeignKey("automation_playbooks.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -47,10 +45,8 @@ class AutomationRun(Base, TimestampMixin):
 
 class AutomationOutbox(Base, TimestampMixin):
     """Immutable handoff to a credential-isolated connector worker."""
-
     __tablename__ = "automation_outbox"
     __table_args__ = (UniqueConstraint("run_id", "step_index", name="uq_automation_outbox_run_step"),)
-
     id: Mapped[str] = mapped_column(UuidType, primary_key=True, server_default=func.uuid_generate_v4())
     tenant_id: Mapped[str] = mapped_column(UuidType, nullable=False, index=True)
     run_id: Mapped[str] = mapped_column(UuidType, ForeignKey("automation_runs.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -62,3 +58,8 @@ class AutomationOutbox(Base, TimestampMixin):
     state: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
     delivery_result: Mapped[dict | None] = mapped_column(JsonType)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    lease_token: Mapped[str | None] = mapped_column(String(64), index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
