@@ -165,6 +165,7 @@ async def create_investigation(
     )
     db.add(item)
     await db.flush()
+    await db.refresh(item)
     return InvestigationOut.model_validate(item)
 
 
@@ -232,6 +233,7 @@ async def attach_entity(
     link = InvestigationEntity(investigation_id=investigation_id, **payload.model_dump())
     db.add(link)
     await db.flush()
+    await db.refresh(link)
     return InvestigationEntityOut.model_validate(link)
 
 
@@ -281,6 +283,7 @@ async def create_case(payload: CaseCreate, db: DbSession, principal: WritePrinci
     item = Case(tenant_id=principal.tenant_id, **payload.model_dump())
     db.add(item)
     await db.flush()
+    await db.refresh(item)
     return CaseOut.model_validate(item)
 
 
@@ -359,4 +362,5 @@ async def add_event(
     )
     db.add(event)
     await db.flush()
+    await db.refresh(event)
     return CaseEventOut.model_validate(event)
