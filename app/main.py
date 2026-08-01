@@ -62,6 +62,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Register connectors so the registry is populated before any request.
     import app.ingest.connectors  # noqa: F401
 
+    # Sync external connector enablement into the capability registry.
+    from app.workers.connector_delivery import build_all_connectors
+
+    build_all_connectors(settings)
+
     yield
 
     if redis is not None:

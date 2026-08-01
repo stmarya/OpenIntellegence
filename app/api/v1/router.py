@@ -9,6 +9,7 @@ from app.api.v1 import (
     ai,
     alerting,
     assets,
+    connectors,
     correlations,
     discovery,
     domains,
@@ -28,6 +29,7 @@ api_router.include_router(workflows.router, tags=["Workflows"])
 api_router.include_router(alerting.router, tags=["Alerting"])
 api_router.include_router(correlations.router, tags=["Correlations"])
 api_router.include_router(orchestration.router, tags=["Orchestration"])
+api_router.include_router(connectors.router, tags=["Connectors"])
 api_router.include_router(assets.router, tags=["Assets & Agents"])
 api_router.include_router(admin.router, tags=["Administration"])
 api_router.include_router(ai.router, tags=["AI"])

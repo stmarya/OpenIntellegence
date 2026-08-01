@@ -13,18 +13,11 @@ from app.api.schemas import ListResponse, Page
 from app.core.deps import DbSession, Principal, Scope, require_scope
 from app.db.orchestration_models import AutomationOutbox, AutomationPlaybook, AutomationRun
 from app.services.provenance import build_provenance
+from app.workers.capability_registry import capability_registry
 
 router = APIRouter()
 ReadPrincipal = Annotated[Principal, Depends(require_scope(Scope.READ))]
 WritePrincipal = Annotated[Principal, Depends(require_scope(Scope.WRITE))]
-_ALLOWED_ACTIONS = {
-    "case.create",
-    "report.generate",
-    "slack.notify",
-    "jira.issue.create",
-    "siem.push",
-    "endpoint.command.request",
-}
 
 
 class ORM(BaseModel):
@@ -125,11 +118,11 @@ async def list_playbooks(
 async def create_playbook(
     payload: PlaybookCreate, db: DbSession, principal: WritePrincipal
 ) -> PlaybookOut:
-    invalid = [step.action for step in payload.steps if step.action not in _ALLOWED_ACTIONS]
+    invalid = capability_registry.validate_actions([step.action for step in payload.steps])
     if invalid:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Unsupported action(s): {', '.join(invalid)}",
+            f"Action(s) not available (not enabled or unknown): {', '.join(invalid)}",
         )
 
     item = AutomationPlaybook(
@@ -304,6 +297,18 @@ async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) ->
     playbook = await db.get(AutomationPlaybook, run.playbook_id)
     if playbook is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Playbook is unavailable.")
+
+    # Re-validate actions at dispatch time.  An external connector may have
+    # become unavailable (credentials removed) since the playbook was created.
+    unavailable = capability_registry.validate_actions(
+        [step["action"] for step in playbook.steps]
+    )
+    if unavailable:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Action(s) no longer available at dispatch time: {', '.join(unavailable)}. "
+            "Re-enable the connector or update the playbook.",
+        )
 
     items = []
     for index, step in enumerate(playbook.steps):

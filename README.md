@@ -188,6 +188,15 @@ records and figures rather than failing.
 | `POST` | `/api/v1/ingest/{source}/run` | `admin` |
 | `POST` | `/api/v1/chat/query` | `read` |
 | `POST` | `/api/v1/reports/generate` | `report.write` |
+| `GET` | `/api/v1/connectors/capabilities` | `read` |
+| `GET` | `/api/v1/connectors/health` | `read` |
+| `GET` | `/api/v1/playbooks` | `read` |
+| `POST` | `/api/v1/playbooks` | `write` |
+| `POST` | `/api/v1/automation-runs` | `write` |
+| `POST` | `/api/v1/automation-runs/{id}/approve` | `write` |
+| `POST` | `/api/v1/automation-runs/{id}/dispatch` | `write` |
+| `GET` | `/api/v1/automation-outbox/dead-letter` | `read` |
+| `POST` | `/api/v1/automation-outbox/{id}/replay` | `write` |
 
 The vulnerability list is ordered by **affected asset count** by default, not
 by CVSS. A 9.8 that touches nothing is less urgent than a 7.8 on a hundred
@@ -197,13 +206,32 @@ hosts, and score-first ordering is how remediation queues end up ignored.
 
 ## Status
 
-This is the foundation slice: schema, normalisation, connector framework,
-REST API, agent gateway, API-key service and AI layer.
+This codebase implements the foundation slice (phases 1–3) and the
+connector/orchestration layer (phases 4–6):
 
-Not yet done: the Prefect/Kafka orchestration layer, the TAXII 2.1 server,
-the OpenSearch and Neo4j integrations, and the outbound webhook emitter. The
-Go endpoint agent lives in a separate repository.
+**Implemented:**
 
-Tests cover normalisation and the security primitives. The connectors and
-HTTP layer are not yet covered by integration tests against recorded
-fixtures.
+- Schema, normalisation, connector framework, REST API, agent gateway,
+  API-key service and AI layer (phases 1–3).
+- **Connector capability registry** — a process-wide registry of enabled action
+  adapters. Playbook creation and dispatch reject actions that are not enabled;
+  unavailable adapters are never silently queued (phase 4).
+- **Capability API** — `GET /api/v1/connectors/capabilities` lists every registered
+  action with its kind and enabled state (phase 4).
+- **Connector health API** — `GET /api/v1/connectors/health` reports per-action
+  outbox state counts (delivered, retry, dead_letter, queued) (phase 5).
+- **Dead-letter replay** — `POST /api/v1/automation-outbox/{id}/replay` re-queues
+  a dead_letter item with idempotency (replay is a no-op if already replayed)
+  and writes the actor to the replay row for audit (phase 5).
+- **Internal action handlers** (phase 6):
+  - `case.create` — creates an investigation case via the domain service.
+  - `report.generate` — generates a threat-intelligence report via the AI service.
+  - `endpoint.command.request` — safe request pipeline: validates an HMAC-SHA256
+    signed, expiring command envelope against an explicit allowlist of endpoint
+    commands; writes a durable `command_audit_log` row for every attempt
+    (accepted or rejected); never opens an outbound socket to the endpoint;
+    requires `COMMAND_SIGNING_KEY` in the environment and dual API-key approval.
+
+**Not yet done:** the Prefect/Kafka orchestration layer, the TAXII 2.1 server,
+the OpenSearch and Neo4j integrations. The Go endpoint agent lives in a
+separate repository.

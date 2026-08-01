@@ -146,13 +146,45 @@ def registry(settings: Settings) -> dict[str, Connector]:
     return result
 
 
+def build_all_connectors(settings: Settings) -> dict[str, Connector]:
+    """Return the complete connector map: external connectors plus internal action handlers.
+
+    Also synchronises the capability registry so the API can expose which
+    actions are currently enabled.
+    """
+    from app.workers.capability_registry import sync_external_connectors
+    from app.workers.internal_actions import (
+        CaseCreateAction,
+        EndpointCommandAction,
+        ReportGenerateAction,
+    )
+
+    external = registry(settings)
+    sync_external_connectors(external)
+
+    connectors: dict[str, Connector] = {**external}
+    connectors["case.create"] = CaseCreateAction()
+    connectors["report.generate"] = ReportGenerateAction()
+
+    # endpoint.command.request requires a signing key; without one the handler
+    # is not registered so the capability registry marks it disabled and
+    # playbook creation is rejected.
+    if settings.command_signing_key:
+        connectors["endpoint.command.request"] = EndpointCommandAction(
+            settings.command_signing_key.get_secret_value()
+        )
+
+    return connectors
+
+
 def retry_delay(attempts: int) -> timedelta:
     return timedelta(seconds=min(3600, 30 * (2 ** min(attempts, 7))))
 
 
 class DeliveryWorker:
     def __init__(self, settings: Settings) -> None:
-        self.settings, self.connectors = settings, registry(settings)
+        self.settings = settings
+        self.connectors = build_all_connectors(settings)
 
     async def claim(self, session: AsyncSession, limit: int = 20) -> list[AutomationOutbox]:
         now, token = datetime.now(UTC), token_urlsafe(24)

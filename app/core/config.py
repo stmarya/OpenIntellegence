@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     siem_webhook_token: SecretStr | None = None
     connector_delivery_timeout_seconds: float = Field(default=10.0, ge=1, le=60)
     connector_max_attempts: int = Field(default=5, ge=1, le=20)
+    # HMAC-SHA256 key for signing endpoint command envelopes.
+    # Must be set before endpoint.command.request actions are delivered.
+    # Keep in environment variables only — never commit this value.
+    command_signing_key: SecretStr | None = None
 
     # --- AI layer --------------------------------------------------------
     llm_api_key: SecretStr | None = None

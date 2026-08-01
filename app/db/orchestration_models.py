@@ -73,3 +73,32 @@ class AutomationOutbox(Base, TimestampMixin):
     available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     lease_token: Mapped[str | None] = mapped_column(String(64), index=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    # Set when this item is a replay of a dead_letter item.
+    replayed_from_id: Mapped[str | None] = mapped_column(UuidType, index=True)
+    replayed_by: Mapped[str | None] = mapped_column(String(255))
+    replayed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CommandAuditLog(Base, TimestampMixin):
+    """Immutable audit record for every endpoint.command.request delivery attempt.
+
+    Written regardless of outcome (accepted or rejected) so there is a
+    durable, append-only record of every command that was attempted.
+    """
+
+    __tablename__ = "command_audit_log"
+
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(UuidType, nullable=False, index=True)
+    outbox_id: Mapped[str] = mapped_column(
+        UuidType,
+        ForeignKey("automation_outbox.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[str] = mapped_column(UuidType, nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    command: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)  # "accepted" | "rejected"
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
