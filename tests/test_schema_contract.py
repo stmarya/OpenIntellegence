@@ -43,3 +43,20 @@ def test_unique_constraints_present() -> None:
         if constraint.__class__.__name__ == "UniqueConstraint"
     }
     assert ("tenant_id", "fingerprint") in alert_uniques
+
+
+def test_alert_evaluation_schema_fields_exist() -> None:
+    """Phase 1-3 additions: resolved evidence column on alerts."""
+    assert "evidence" in _table("alerts").c
+
+
+def test_correlation_factor_provenance_column_exists() -> None:
+    """Phase 2 addition: factor provenance for server-resolved evidence."""
+    assert "factor_provenance" in _table("correlations").c
+
+
+def test_timeline_events_table_exists() -> None:
+    """Phase 3 addition: cross-entity append-only audit timeline."""
+    cols = _table("timeline_events").c
+    for name in ("id", "tenant_id", "object_type", "object_id", "event_type", "event_at", "created_at"):
+        assert name in cols, f"Column {name!r} missing from timeline_events"

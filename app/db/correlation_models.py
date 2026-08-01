@@ -1,4 +1,4 @@
-"""Explainable correlation records and AI analyst briefs."""
+"""Explainable correlation records, AI analyst briefs, and cross-entity timeline."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ class Correlation(Base, TimestampMixin):
     risk_score: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     risk_tier: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     automation_candidates: Mapped[list] = mapped_column(JsonType, default=list, nullable=False)
+    factor_provenance: Mapped[list] = mapped_column(JsonType, default=list, nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
@@ -41,3 +42,32 @@ class CorrelationAiBrief(Base, TimestampMixin):
     citations: Mapped[list] = mapped_column(JsonType, default=list, nullable=False)
     model_label: Mapped[str] = mapped_column(String(128), default="rag-grounded", nullable=False)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TimelineEvent(Base):
+    """Append-only cross-entity audit timeline.
+
+    Links alerts, correlations, investigations, and cases in a single
+    chronological stream. Rows are never updated or deleted — new transitions
+    are always appended. ``object_type`` identifies the entity kind and
+    ``object_id`` is its primary key. ``data`` carries the before/after
+    snapshot or transition context serialised to JSON.
+
+    Note: deliberately has no ``updated_at`` because updating a timeline event
+    would defeat its purpose as an immutable audit trail.
+    """
+
+    __tablename__ = "timeline_events"
+
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(UuidType, nullable=False, index=True)
+    # One of: alert, correlation, investigation, case
+    object_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    object_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor: Mapped[str | None] = mapped_column(String(255))
+    data: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )

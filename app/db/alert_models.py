@@ -45,6 +45,7 @@ class Alert(Base, TimestampMixin):
     entity_type: Mapped[str | None] = mapped_column(String(64), index=True)
     entity_id: Mapped[str | None] = mapped_column(String(255), index=True)
     risk_score: Mapped[int | None] = mapped_column(Integer)
+    evidence: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
     payload: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
     first_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -197,13 +197,68 @@ hosts, and score-first ordering is how remediation queues end up ignored.
 
 ## Status
 
-This is the foundation slice: schema, normalisation, connector framework,
-REST API, agent gateway, API-key service and AI layer.
+### Foundation (P0)
 
-Not yet done: the Prefect/Kafka orchestration layer, the TAXII 2.1 server,
-the OpenSearch and Neo4j integrations, and the outbound webhook emitter. The
-Go endpoint agent lives in a separate repository.
+Schema, normalisation, connector framework, REST API, agent gateway,
+API-key service, rate limiting and AI (RAG-grounded chat / reports) layer.
 
-Tests cover normalisation and the security primitives. The connectors and
-HTTP layer are not yet covered by integration tests against recorded
-fixtures.
+### Alert Evaluation & Correlation Evidence (Phases 1–3)
+
+**Phase 1 – AlertEvaluationWorker** (`app/workers/alert_evaluation.py`)
+
+A background worker evaluates all enabled tenant alert rules against
+server-side DB facts on a 5-minute cadence. Supported trigger types:
+
+| Trigger type | What is evaluated |
+|---|---|
+| `kev_exposure` | Assets with open KEV exposures in the tenant |
+| `ioc_sighting` | New IOC sightings within a configurable look-back window |
+| `agent_stale` | Agents whose heartbeat has exceeded the staleness threshold |
+| `ransomware_relevance` | Ransomware victims matching configured sectors |
+| `feed_degraded` | Ingestion feeds with repeated failures in the window |
+| `custom` | Safe metric-threshold conditions (whitelisted metrics only) |
+
+Fingerprint/cooldown deduplication reuses the existing `Alert` table
+unique constraint. Each alert carries an `evidence` dict with explicit
+`evidence_state` annotations (`"present"` / `"partial"` / `"unknown"`)
+so analysts can distinguish known-false from not-yet-known values.
+
+**Safety guarantee**: the worker never executes or schedules remediation
+actions. All `automation_candidates` in the response carry
+`requires_approval: true` and are gated by the existing `AutomationRun`
+approval workflow.
+
+**Phase 2 – Server-side correlation evidence resolver**
+
+`app/services/correlation.resolve_evidence()` reads assets, exposures,
+vulnerabilities/KEV, sightings and ransomware victims from the DB and
+resolves an evidence dict with factor provenance. The `POST
+/correlations/evaluate` endpoint now calls the resolver server-side;
+client payload is accepted only as *optional context hints* for fields
+the server cannot determine independently. Resolved provenance is
+persisted in the new `correlations.factor_provenance` column.
+
+**Phase 3 – Cross-entity timeline events**
+
+A new `timeline_events` table provides an append-only audit stream
+linking alerts, correlations, investigations and cases. The worker
+appends an `alert.triggered` event for every alert it fires. Rows are
+never updated or deleted. Case creation remains subject to the existing
+`AutomationRun` proposal/approval gate (`requires_approval: true`).
+
+**Migration**: `alembic/versions/0008_alert_evaluation_timeline.py` adds
+`alerts.evidence`, `correlations.factor_provenance`, and the
+`timeline_events` table.
+
+**Tests**: `tests/test_alert_evaluation.py` provides 28 deterministic
+unit tests (no DB required) covering tenant isolation, rule evaluation for
+every trigger type, cooldown dedup, resolved score evidence, and the
+alert → correlation → case transition state machine.
+
+### Not yet implemented
+
+The Prefect/Kafka orchestration layer, the TAXII 2.1 server, the
+OpenSearch and Neo4j integrations, the outbound webhook emitter, and
+Identity/RBAC/login. The Go endpoint agent lives in a separate
+repository.
+

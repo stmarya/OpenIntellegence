@@ -16,7 +16,7 @@ from app.api.schemas import ListResponse, Page
 from app.core.config import get_settings
 from app.core.deps import DbSession, Principal, Scope, require_scope
 from app.db.correlation_models import Correlation, CorrelationAiBrief
-from app.services.correlation import assess
+from app.services.correlation import assess, resolve_evidence
 from app.services.provenance import build_provenance
 
 router = APIRouter()
@@ -50,6 +50,7 @@ class CorrelationOut(ORM):
     primary_entity_id: str
     evidence: dict
     factor_breakdown: list
+    factor_provenance: list = Field(default_factory=list)
     risk_score: int
     risk_tier: str
     automation_candidates: list
@@ -79,15 +80,24 @@ def _rag(db) -> RagService:
 async def evaluate(
     payload: CorrelationEvaluate, db: DbSession, principal: WritePrincipal
 ) -> CorrelationOut:
-    evidence = payload.model_dump()
-    outcome = assess(evidence)
+    # Client payload provides optional context hints; the server resolves facts.
+    client_hints = payload.model_dump(exclude={"title", "primary_entity_type", "primary_entity_id", "source_refs", "notes"})
+    resolved = await resolve_evidence(
+        db,
+        tenant_id=principal.tenant_id,
+        entity_type=payload.primary_entity_type,
+        entity_id=payload.primary_entity_id,
+        client_hints=client_hints,
+    )
+    outcome = assess(resolved.evidence)
     record = Correlation(
         tenant_id=principal.tenant_id,
         title=payload.title,
         primary_entity_type=payload.primary_entity_type,
         primary_entity_id=payload.primary_entity_id,
-        evidence=evidence,
+        evidence=resolved.evidence,
         factor_breakdown=outcome.factors,
+        factor_provenance=resolved.factor_provenance,
         risk_score=outcome.score,
         risk_tier=outcome.tier,
         automation_candidates=outcome.automation_candidates,
