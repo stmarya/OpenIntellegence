@@ -9,7 +9,7 @@ from secrets import token_urlsafe
 from typing import Protocol
 
 import httpx
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -30,6 +30,15 @@ class Connector(Protocol):
     async def deliver(self, item: AutomationOutbox) -> DeliveryReceipt: ...
 
 
+def _retryable_status(status_code: int) -> bool:
+    return status_code in {408, 429, 502, 503, 504} or status_code >= 500
+
+
+def _adf(text: str) -> dict:
+    """Build the minimal Jira Cloud Atlassian Document Format document."""
+    return {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": text[:32000]}]}]}
+
+
 class SlackConnector:
     def __init__(self, webhook_url: str, timeout: float) -> None:
         self.webhook_url, self.timeout = webhook_url, timeout
@@ -42,7 +51,7 @@ class SlackConnector:
             response = await client.post(self.webhook_url, json={"text": text})
         if 200 <= response.status_code < 300:
             return DeliveryReceipt(True, detail={"status_code": response.status_code})
-        return DeliveryReceipt(False, retryable=response.status_code >= 500, error=f"Slack returned {response.status_code}.")
+        return DeliveryReceipt(False, retryable=_retryable_status(response.status_code), error=f"Slack returned {response.status_code}.")
 
 
 class JiraConnector:
@@ -57,13 +66,13 @@ class JiraConnector:
             return DeliveryReceipt(False, error="Jira step requires title or run_context.summary.")
         fields = {"project": {"key": project}, "summary": title, "issuetype": {"name": data.get("issue_type", "Task")}}
         if data.get("description"):
-            fields["description"] = data["description"]
+            fields["description"] = _adf(str(data["description"]))
         async with httpx.AsyncClient(timeout=self.timeout, auth=self.auth) as client:
             response = await client.post(f"{self.base_url}/rest/api/3/issue", json={"fields": fields})
         if 200 <= response.status_code < 300:
             body = response.json()
             return DeliveryReceipt(True, remote_id=body.get("key"), detail={"id": body.get("id")})
-        return DeliveryReceipt(False, retryable=response.status_code >= 500, error=f"Jira returned {response.status_code}.")
+        return DeliveryReceipt(False, retryable=_retryable_status(response.status_code), error=f"Jira returned {response.status_code}.")
 
 
 class SiemWebhookConnector:
@@ -78,7 +87,7 @@ class SiemWebhookConnector:
             response = await client.post(self.url, json={"action": item.action, "target": item.target, "payload": item.payload}, headers=headers)
         if 200 <= response.status_code < 300:
             return DeliveryReceipt(True, detail={"status_code": response.status_code})
-        return DeliveryReceipt(False, retryable=response.status_code >= 500, error=f"SIEM endpoint returned {response.status_code}.")
+        return DeliveryReceipt(False, retryable=_retryable_status(response.status_code), error=f"SIEM endpoint returned {response.status_code}.")
 
 
 def registry(settings: Settings) -> dict[str, Connector]:
@@ -103,7 +112,9 @@ class DeliveryWorker:
 
     async def claim(self, session: AsyncSession, limit: int = 20) -> list[AutomationOutbox]:
         now, token = datetime.now(UTC), token_urlsafe(24)
-        stmt = select(AutomationOutbox).where(AutomationOutbox.state.in_(["queued", "retry"]), or_(AutomationOutbox.available_at.is_(None), AutomationOutbox.available_at <= now), or_(AutomationOutbox.lease_until.is_(None), AutomationOutbox.lease_until < now)).order_by(AutomationOutbox.created_at).limit(limit).with_for_update(skip_locked=True)
+        pending = and_(AutomationOutbox.state.in_(["queued", "retry"]), or_(AutomationOutbox.available_at.is_(None), AutomationOutbox.available_at <= now), or_(AutomationOutbox.lease_until.is_(None), AutomationOutbox.lease_until < now))
+        abandoned = and_(AutomationOutbox.state == "delivering", AutomationOutbox.lease_until < now)
+        stmt = select(AutomationOutbox).where(or_(pending, abandoned)).order_by(AutomationOutbox.created_at).limit(limit).with_for_update(skip_locked=True)
         rows = (await session.execute(stmt)).scalars().all()
         for row in rows:
             row.state, row.lease_token, row.lease_until = "delivering", token, now + timedelta(minutes=2)
