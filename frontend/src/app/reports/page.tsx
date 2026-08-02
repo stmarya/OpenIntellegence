@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -25,7 +26,7 @@ const columns: Column<ReportRow>[] = [
     header: 'Report',
     render: (row) => (
       <>
-        <Link href={`/reports/${row.id}`}>
+        <Link href={`/reports/${encodeURIComponent(row.id)}`}>
           <strong>{unknown(row.title)}</strong>
         </Link>
         <br />
@@ -58,8 +59,9 @@ const columns: Column<ReportRow>[] = [
   { key: 'created', header: 'Requested', render: (row) => <small>{unknown(row.created_at)}</small> },
 ];
 
-export default async function ReportsPage() {
-  const envelope = await fetchList<ReportRow>('/reports');
+export default async function ReportsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<ReportRow>(withPageQuery('/reports', state));
   return (
     <section className="content">
       <h1>Reports</h1>
@@ -71,10 +73,16 @@ export default async function ReportsPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/reports"
         emptyTitle="No reports requested"
         emptyDetail="The API responded successfully and no report has been requested for this tenant."
         caption="A queued report shows its real progress value, never a simulated one."
       />
+      <p className="muted">
+        Failed reports stay in the list with their failure reason. Removing them would hide the fact that a briefing
+        someone expected was never produced.
+      </p>
     </section>
   );
 }

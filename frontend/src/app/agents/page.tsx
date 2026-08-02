@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -26,11 +27,11 @@ const columns: Column<AgentRow>[] = [
     render: (row) => (
       <>
         <strong>
-          <Link href={`/agents/${row.id}`}>{row.id}</Link>
+          <Link href={`/agents/${encodeURIComponent(row.id)}`}>{row.id}</Link>
         </strong>
         <br />
         <small>
-          {unknown(row.os_family)} · agent {unknown(row.version)}
+          {unknown(row.os_family)} \u00b7 agent {unknown(row.version)}
         </small>
       </>
     ),
@@ -45,16 +46,23 @@ const columns: Column<AgentRow>[] = [
         <StatusChip label="Unknown" tone="unknown" />
       ),
   },
+  { key: 'asset', header: 'Asset', render: (row) => <small>{unknown(row.asset_id)}</small> },
   {
     key: 'heartbeat',
     header: 'Last heartbeat',
-    render: (row) => <>{row.last_heartbeat_at ?? 'Never reported'}</>,
+    render: (row) =>
+      row.last_heartbeat_at ? (
+        <small>{row.last_heartbeat_at}</small>
+      ) : (
+        <StatusChip label="Never reported" tone="unknown" />
+      ),
   },
   { key: 'cert', header: 'Certificate expires', render: (row) => <small>{unknown(row.cert_expires_at)}</small> },
 ];
 
-export default async function EndpointAgentsPage() {
-  const envelope = await fetchList<AgentRow>('/agents');
+export default async function EndpointAgentsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<AgentRow>(withPageQuery('/agents', state));
   return (
     <section className="content">
       <h1>Endpoint agents</h1>
@@ -66,10 +74,16 @@ export default async function EndpointAgentsPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/agents"
         emptyTitle="No agent enrolled"
         emptyDetail="The API responded successfully and no endpoint agent has completed enrollment for this tenant."
         caption="This surface reads fleet state only. It cannot send a command to an endpoint."
       />
+      <p className="muted">
+        A heartbeat timestamp records the last contact received. It does not confirm the endpoint is healthy now, only
+        that it was reachable then.
+      </p>
     </section>
   );
 }
