@@ -208,6 +208,8 @@ async def generate_ai_brief(
                 "deterministic evidence and source references instead."
             ),
             citations=[],
+            model_label="rag-grounded",
+            generated_at=datetime.now(UTC),
         )
     else:
         brief = CorrelationAiBrief(
@@ -215,7 +217,10 @@ async def generate_ai_brief(
             status="grounded",
             content=answer,
             citations=citation_data,
+            model_label="rag-grounded",
+            generated_at=datetime.now(UTC),
         )
     db.add(brief)
     await db.flush()
+    await db.refresh(brief)
     return AiBriefOut.model_validate(brief)

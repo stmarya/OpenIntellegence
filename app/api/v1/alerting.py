@@ -146,6 +146,7 @@ async def create_rule(
     item = AlertRule(tenant_id=principal.tenant_id, **payload.model_dump())
     db.add(item)
     await db.flush()
+    await db.refresh(item)
     return AlertRuleOut.model_validate(item)
 
 
