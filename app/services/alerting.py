@@ -1,4 +1,4 @@
-"""Alerting helpers shared by API and workers."""
+"""Shared alerting primitives used by the API and evaluation worker."""
 
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ def alert_fingerprint(
     severity: str,
     bucket: datetime,
 ) -> str:
-    """Return a deterministic SHA-256 fingerprint for an alert occurrence.
+    """Return the canonical hourly fingerprint for one alert occurrence.
 
-    The bucket parameter is deliberately limited to the current UTC hour. A
-    caller enforcing a rule cooldown must additionally lock and aggregate a
-    matching rule/entity alert over the configured cooldown interval, so a
-    bucket transition cannot create a duplicate alert.
+    The hourly bucket deduplicates same-hour events. A cooldown that spans an
+    hour boundary must be handled by a locked, rule/entity lookup in the
+    evaluation worker; callers must not use a changed fingerprint as a reason
+    to create a duplicate alert.
     """
     raw = "|".join(
         (
@@ -32,4 +32,4 @@ def alert_fingerprint(
             bucket.strftime("%Y%m%d%H"),
         )
     )
-    return sha256(raw.encode()).hexdigest()
+    return sha256(raw.encode("utf-8")).hexdigest()
