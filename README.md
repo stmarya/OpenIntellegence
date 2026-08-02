@@ -202,7 +202,8 @@ REST API, agent gateway, API-key service and AI layer.
 
 Detection-and-response P1 additions (alert-evaluation worker and server-side
 correlation evidence resolution) are implemented with deterministic unit tests
-and contract checks, and remain pending runtime validation in a live stack.
+and contract checks (currently `asset` identity resolution only), and remain
+pending runtime validation in a live stack.
 
 Not yet done: the Prefect/Kafka orchestration layer, the TAXII 2.1 server,
 the OpenSearch and Neo4j integrations, and the outbound webhook emitter. The

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -34,7 +34,7 @@ class CorrelationEvaluate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(min_length=3, max_length=512)
-    primary_entity_type: str = Field(min_length=2, max_length=64)
+    primary_entity_type: Literal["asset"] = "asset"
     primary_entity_id: str = Field(min_length=1, max_length=255)
     analyst_notes: str | None = Field(default=None, max_length=4000)
     manual_annotation: dict | None = None
@@ -135,10 +135,6 @@ async def _resolve_evidence(
         },
         "provenance_references": [],
     }
-
-    if payload.primary_entity_type != "asset":
-        evidence["resolution_status"] = "unavailable"
-        return evidence
 
     asset = (
         await db.execute(

@@ -354,6 +354,47 @@ class AlertEvaluationWorker:
             )
         ).scalar_one()
 
+    async def _lock_recent_cooldown_alert(
+        self,
+        session: AsyncSession,
+        *,
+        rule: AlertRule,
+        candidate: Candidate,
+        now: datetime,
+    ) -> Alert | None:
+        cooldown_minutes = max(0, int(rule.cooldown_minutes))
+        if cooldown_minutes == 0:
+            return None
+        return (
+            await session.execute(
+                select(Alert)
+                .where(
+                    Alert.tenant_id == rule.tenant_id,
+                    Alert.rule_id == rule.id,
+                    Alert.severity == candidate.severity,
+                    Alert.entity_type == candidate.entity_type,
+                    Alert.entity_id == candidate.entity_id,
+                    Alert.last_triggered_at >= now - timedelta(minutes=cooldown_minutes),
+                )
+                .order_by(Alert.last_triggered_at.desc())
+                .limit(1)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+
+    async def _update_existing_alert(
+        self, existing: Alert, candidate: Candidate, now: datetime
+    ) -> None:
+        existing.occurrences += 1
+        existing.last_triggered_at = now
+        existing.title = candidate.title
+        existing.summary = candidate.summary
+        existing.severity = candidate.severity
+        existing.entity_type = candidate.entity_type
+        existing.entity_id = candidate.entity_id
+        existing.risk_score = candidate.risk_score
+        existing.payload = candidate.payload
+
     async def _insert_alert(
         self,
         session: AsyncSession,
@@ -386,6 +427,17 @@ class AlertEvaluationWorker:
     async def _apply_candidate(
         self, session: AsyncSession, rule: AlertRule, candidate: Candidate, now: datetime
     ) -> None:
+        existing = await self._lock_recent_cooldown_alert(
+            session,
+            rule=rule,
+            candidate=candidate,
+            now=now,
+        )
+        if existing is not None:
+            await self._update_existing_alert(existing, candidate, now)
+            await session.flush()
+            return
+
         fingerprint = alert_fingerprint(
             rule.tenant_id,
             rule_id=rule.id,
@@ -408,15 +460,7 @@ class AlertEvaluationWorker:
             pass
 
         existing = await self._lock_existing_alert(session, rule.tenant_id, fingerprint)
-        existing.occurrences += 1
-        existing.last_triggered_at = now
-        existing.title = candidate.title
-        existing.summary = candidate.summary
-        existing.severity = candidate.severity
-        existing.entity_type = candidate.entity_type
-        existing.entity_id = candidate.entity_id
-        existing.risk_score = candidate.risk_score
-        existing.payload = candidate.payload
+        await self._update_existing_alert(existing, candidate, now)
         await session.flush()
 
     async def _evaluate_rule(

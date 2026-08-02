@@ -30,6 +30,9 @@ class _ExecResult:
     def all(self):
         return self._rows
 
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
 
 class _Session:
     def __init__(self, rows):
@@ -211,8 +214,47 @@ async def test_race_fallback_updates_risk_score_and_occurrences() -> None:
 
 
 def test_worker_has_no_automation_dispatch_hooks() -> None:
-    source = Path(
-        "/home/runner/work/OpenIntellegence/OpenIntellegence/app/workers/alert_evaluation.py"
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "workers" / "alert_evaluation.py"
     ).read_text(encoding="utf-8")
     assert "dispatch_run" not in source
     assert "AutomationOutbox" not in source
+
+
+@pytest.mark.asyncio
+async def test_cooldown_aggregates_across_hour_bucket_boundaries() -> None:
+    worker = AlertEvaluationWorker(SimpleNamespace())
+    existing_time = datetime(2026, 1, 1, 12, 59, tzinfo=UTC)
+    now = datetime(2026, 1, 1, 13, 0, tzinfo=UTC)
+    existing = SimpleNamespace(
+        occurrences=1,
+        last_triggered_at=existing_time,
+        title="old",
+        summary="old",
+        severity="low",
+        entity_type="asset",
+        entity_id="asset-1",
+        risk_score=5,
+        payload={},
+    )
+
+    async def _lock_recent(*_args, **_kwargs):
+        return existing
+
+    async def _insert(*_args, **_kwargs):
+        raise AssertionError("insert should not be attempted within cooldown window")
+
+    worker._lock_recent_cooldown_alert = _lock_recent  # type: ignore[assignment]
+    worker._insert_alert = _insert  # type: ignore[assignment]
+    candidate = Candidate(
+        title="new",
+        summary="new",
+        severity="high",
+        entity_type="asset",
+        entity_id="asset-1",
+        risk_score=99,
+        payload={"k": "v"},
+    )
+    await worker._apply_candidate(_Session([]), _rule("kev_exposure"), candidate, now)
+    assert existing.occurrences == 2
+    assert existing.last_triggered_at == now

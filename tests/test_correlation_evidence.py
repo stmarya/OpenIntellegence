@@ -211,3 +211,12 @@ def test_legacy_scoring_fields_are_rejected() -> None:
             primary_entity_id="asset-1",
             cvss_score=9.8,  # legacy input must fail
         )
+
+
+def test_non_asset_entity_type_is_rejected_by_contract() -> None:
+    with pytest.raises(ValidationError):
+        CorrelationEvaluate(
+            title="bad payload",
+            primary_entity_type="vulnerability",
+            primary_entity_id="CVE-2026-0001",
+        )
