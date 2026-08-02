@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.db.base import get_session_factory
 from app.db.orchestration_models import AutomationOutbox
+from app.services.capabilities import INTERNAL_ACTIONS
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,25 @@ def retry_delay(attempts: int) -> timedelta:
     return timedelta(seconds=min(3600, 30 * (2 ** min(attempts, 7))))
 
 
+def worker_connector_health(settings: Settings) -> list[dict]:
+    """Derive per-connector health from configuration without network probes.
+
+    Health is determined by whether all required configuration values are
+    present.  No outbound connections are made.
+
+    The ``last_delivery_result`` field in ``AutomationOutbox.delivery_result``
+    can be used by callers to enrich this view with the most recent delivery
+    outcome for a given connector.
+
+    Future active probing (e.g., lightweight ping/health-check against each
+    remote endpoint) is planned but not yet implemented to avoid leaking
+    secret endpoint URLs via DNS/network-layer monitoring.
+    """
+    from app.services.capabilities import connector_health
+
+    return connector_health(settings)
+
+
 class DeliveryWorker:
     def __init__(self, settings: Settings) -> None:
         self.settings, self.connectors = settings, registry(settings)
@@ -160,10 +180,13 @@ class DeliveryWorker:
             AutomationOutbox.state.in_(["queued", "retry"]),
             or_(AutomationOutbox.available_at.is_(None), AutomationOutbox.available_at <= now),
             or_(AutomationOutbox.lease_until.is_(None), AutomationOutbox.lease_until < now),
+            # Internal actions are served by dedicated workers, not this delivery worker.
+            AutomationOutbox.action.not_in(INTERNAL_ACTIONS),
         )
         abandoned = and_(
             AutomationOutbox.state == "delivering",
             AutomationOutbox.lease_until < now,
+            AutomationOutbox.action.not_in(INTERNAL_ACTIONS),
         )
         stmt = (
             select(AutomationOutbox)

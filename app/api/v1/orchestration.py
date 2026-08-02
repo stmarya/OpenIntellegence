@@ -10,21 +10,23 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 
 from app.api.schemas import ListResponse, Page
+from app.core.config import Settings, get_settings
 from app.core.deps import DbSession, Principal, Scope, require_scope
 from app.db.orchestration_models import AutomationOutbox, AutomationPlaybook, AutomationRun
+from app.services.capabilities import (
+    ALL_ACTIONS,
+    build_capability_registry,
+    connector_health,
+    enabled_delivery_actions,
+)
 from app.services.provenance import build_provenance
 
 router = APIRouter()
 ReadPrincipal = Annotated[Principal, Depends(require_scope(Scope.READ))]
 WritePrincipal = Annotated[Principal, Depends(require_scope(Scope.WRITE))]
-_ALLOWED_ACTIONS = {
-    "case.create",
-    "report.generate",
-    "slack.notify",
-    "jira.issue.create",
-    "siem.push",
-    "endpoint.command.request",
-}
+
+#: Legacy alias — kept for backward compat in the playbook validator.
+_ALLOWED_ACTIONS = ALL_ACTIONS
 
 
 class ORM(BaseModel):
@@ -89,7 +91,45 @@ class OutboxOut(ORM):
     target: str
     state: str
     idempotency_key: str
+    attempts: int
+    replay_count: int
     created_at: datetime
+
+
+class CapabilityOut(BaseModel):
+    action: str
+    connector_type: str
+    enabled: bool
+    config_state: str
+    config_reason: str
+
+
+class ConnectorHealthOut(BaseModel):
+    action: str
+    connector_type: str
+    status: str
+    config_state: str
+    config_reason: str
+    active_probe: str
+
+
+class OutboxStateCountsOut(BaseModel):
+    queued: int = 0
+    delivering: int = 0
+    retry: int = 0
+    dead_letter: int = 0
+    delivered: int = 0
+    oldest_queued_seconds: float | None = None
+
+
+class HealthSummaryOut(BaseModel):
+    capabilities: list[CapabilityOut]
+    connectors: list[ConnectorHealthOut]
+    outbox: OutboxStateCountsOut
+
+
+class ReplayRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 def _actor(principal: Principal) -> str:
@@ -273,7 +313,12 @@ async def reject_run(
     response_model=list[OutboxOut],
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) -> list[OutboxOut]:
+async def dispatch_run(
+    run_id: str,
+    db: DbSession,
+    principal: WritePrincipal,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> list[OutboxOut]:
     run = (
         await db.execute(
             select(AutomationRun).where(
@@ -305,6 +350,28 @@ async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) ->
     if playbook is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Playbook is unavailable.")
 
+    # Reject dispatch if any delivery-adapter step has no enabled connector.
+    # Internal actions are allowed to proceed; they will be served by future workers.
+    available = enabled_delivery_actions(settings)
+    from app.services.capabilities import DELIVERY_ACTIONS
+
+    unavailable = [
+        step["action"]
+        for step in playbook.steps
+        if step["action"] in DELIVERY_ACTIONS and step["action"] not in available
+    ]
+    if unavailable:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {
+                "message": (
+                    "Dispatch rejected: the following action(s) have no enabled delivery "
+                    "adapter. Configure the connector or remove the step before dispatching."
+                ),
+                "unavailable_actions": sorted(set(unavailable)),
+            },
+        )
+
     items = []
     for index, step in enumerate(playbook.steps):
         item = AutomationOutbox(
@@ -323,3 +390,170 @@ async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) ->
     run.dispatched_at = datetime.now(UTC)
     await db.flush()
     return [OutboxOut.model_validate(x) for x in items]
+
+
+# ---------------------------------------------------------------------------
+# Capability registry and operational health
+# ---------------------------------------------------------------------------
+
+
+@router.get("/orchestration/capabilities", response_model=list[CapabilityOut])
+async def list_capabilities(
+    principal: ReadPrincipal,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> list[CapabilityOut]:
+    """Return the capability registry derived from configured adapters.
+
+    Safe metadata only — no URLs, tokens, or secrets are included.
+    """
+    entries = build_capability_registry(settings)
+    return [
+        CapabilityOut(
+            action=e.action,
+            connector_type=e.connector_type,
+            enabled=e.enabled,
+            config_state=e.config_state,
+            config_reason=e.config_reason,
+        )
+        for e in entries
+    ]
+
+
+@router.get("/orchestration/health", response_model=HealthSummaryOut)
+async def orchestration_health(
+    db: DbSession,
+    principal: ReadPrincipal,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> HealthSummaryOut:
+    """Return operational health summary for the orchestration subsystem.
+
+    Outbox counts are scoped to the calling tenant — cross-tenant data is
+    never included.
+    """
+    capabilities = [
+        CapabilityOut(
+            action=e.action,
+            connector_type=e.connector_type,
+            enabled=e.enabled,
+            config_state=e.config_state,
+            config_reason=e.config_reason,
+        )
+        for e in build_capability_registry(settings)
+    ]
+    connectors = [ConnectorHealthOut(**h) for h in connector_health(settings)]
+
+    # Outbox counts — tenant-scoped
+    state_counts_result = await db.execute(
+        select(AutomationOutbox.state, func.count(AutomationOutbox.id))
+        .where(AutomationOutbox.tenant_id == principal.tenant_id)
+        .group_by(AutomationOutbox.state)
+    )
+    counts: dict[str, int] = {row[0]: row[1] for row in state_counts_result.all()}
+
+    # Oldest queued/retry item age (seconds since created_at)
+    oldest_result = await db.execute(
+        select(func.min(AutomationOutbox.created_at))
+        .where(
+            AutomationOutbox.tenant_id == principal.tenant_id,
+            AutomationOutbox.state.in_(["queued", "retry"]),
+        )
+    )
+    oldest_dt: datetime | None = oldest_result.scalar_one_or_none()
+    oldest_age: float | None = None
+    if oldest_dt is not None:
+        now = datetime.now(UTC)
+        if oldest_dt.tzinfo is None:
+
+            oldest_dt = oldest_dt.replace(tzinfo=UTC)
+        oldest_age = (now - oldest_dt).total_seconds()
+
+    outbox = OutboxStateCountsOut(
+        queued=counts.get("queued", 0),
+        delivering=counts.get("delivering", 0),
+        retry=counts.get("retry", 0),
+        dead_letter=counts.get("dead_letter", 0),
+        delivered=counts.get("delivered", 0),
+        oldest_queued_seconds=oldest_age,
+    )
+    return HealthSummaryOut(capabilities=capabilities, connectors=connectors, outbox=outbox)
+
+
+# ---------------------------------------------------------------------------
+# Dead-letter replay
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/automation-outbox/{outbox_id}/replay",
+    response_model=OutboxOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def replay_dead_letter(
+    outbox_id: str,
+    payload: ReplayRequest,
+    db: DbSession,
+    principal: WritePrincipal,
+) -> OutboxOut:
+    """Re-queue a dead-lettered outbox item for delivery.
+
+    Rules:
+    * Caller must hold write scope.
+    * The item must belong to the calling tenant.
+    * Only items in ``dead_letter`` state may be replayed.
+    * ``endpoint.command.request`` actions are never replayed automatically;
+      a new run with fresh approvals is required.
+    * A new idempotency key is generated to prevent duplicate remote
+      side effects from the original delivery attempt.
+    * Attempt counter is reset so retry back-off starts fresh.
+    * Replay audit data (actor, timestamp, reason, previous idempotency key)
+      is appended to ``replay_history``.
+    """
+    item = (
+        await db.execute(
+            select(AutomationOutbox).where(
+                AutomationOutbox.id == outbox_id,
+                AutomationOutbox.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Outbox item not found.")
+
+    if item.state != "dead_letter":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Only dead_letter items may be replayed; current state is '{item.state}'.",
+        )
+
+    if item.action == "endpoint.command.request":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "endpoint.command.request actions cannot be replayed automatically. "
+            "Create a new automation run with fresh approvals.",
+        )
+
+
+    original_key = item.idempotency_key
+    new_key = f"{original_key}:replay:{item.replay_count + 1}"
+
+    audit_entry = {
+        "actor": _actor(principal),
+        "replayed_at": datetime.now(UTC).isoformat(),
+        "reason": payload.reason,
+        "previous_idempotency_key": original_key,
+        "previous_attempts": item.attempts,
+    }
+
+    item.idempotency_key = new_key
+    item.state = "queued"
+    item.attempts = 0
+    item.last_error = None
+    item.available_at = None
+    item.lease_token = None
+    item.lease_until = None
+    item.delivery_result = None
+    item.replay_count = item.replay_count + 1
+    item.replay_history = [*item.replay_history, audit_entry]
+
+    await db.flush()
+    return OutboxOut.model_validate(item)

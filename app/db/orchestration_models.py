@@ -73,3 +73,5 @@ class AutomationOutbox(Base, TimestampMixin):
     available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     lease_token: Mapped[str | None] = mapped_column(String(64), index=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    replay_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    replay_history: Mapped[list] = mapped_column(JsonType, default=list, nullable=False)
