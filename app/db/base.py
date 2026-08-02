@@ -87,14 +87,3 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
-
-
-# Register every ORM module on Base.metadata.
-from app.db import (  # noqa: E402,F401
-    alert_models,
-    correlation_models,
-    domain_models,
-    models,
-    orchestration_models,
-    workflow_models,
-)

@@ -10,21 +10,34 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 
 from app.api.schemas import ListResponse, Page
+from app.core.config import get_settings
 from app.core.deps import DbSession, Principal, Scope, require_scope
 from app.db.orchestration_models import AutomationOutbox, AutomationPlaybook, AutomationRun
 from app.services.provenance import build_provenance
+from app.workers.connector_delivery import P0_DELIVERABLE_ACTIONS, enabled_delivery_actions
 
 router = APIRouter()
 ReadPrincipal = Annotated[Principal, Depends(require_scope(Scope.READ))]
 WritePrincipal = Annotated[Principal, Depends(require_scope(Scope.WRITE))]
-_ALLOWED_ACTIONS = {
-    "case.create",
-    "report.generate",
-    "slack.notify",
-    "jira.issue.create",
-    "siem.push",
-    "endpoint.command.request",
-}
+
+
+def _allowed_actions() -> frozenset[str]:
+    # Explicit P0 capability boundary until a dedicated capability registry lands.
+    return P0_DELIVERABLE_ACTIONS
+
+
+def _configured_actions() -> frozenset[str]:
+    return enabled_delivery_actions(get_settings())
+
+
+def _unconfigured_actions(steps: list[dict], configured: frozenset[str]) -> list[str]:
+    return sorted(
+        {
+            step["action"]
+            for step in steps
+            if isinstance(step, dict) and step.get("action") not in configured
+        }
+    )
 
 
 class ORM(BaseModel):
@@ -125,7 +138,7 @@ async def list_playbooks(
 async def create_playbook(
     payload: PlaybookCreate, db: DbSession, principal: WritePrincipal
 ) -> PlaybookOut:
-    invalid = [step.action for step in payload.steps if step.action not in _ALLOWED_ACTIONS]
+    invalid = [step.action for step in payload.steps if step.action not in _allowed_actions()]
     if invalid:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -169,9 +182,6 @@ async def propose_run(payload: RunCreate, db: DbSession, principal: WritePrincip
     if playbook is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Enabled playbook not found.")
 
-    required = (
-        2 if any(step.get("action") == "endpoint.command.request" for step in playbook.steps) else 1
-    )
     run = AutomationRun(
         tenant_id=principal.tenant_id,
         playbook_id=playbook.id,
@@ -180,7 +190,7 @@ async def propose_run(payload: RunCreate, db: DbSession, principal: WritePrincip
         idempotency_key=payload.idempotency_key,
         context=payload.context,
         requested_by=_actor(principal),
-        required_approvals=required,
+        required_approvals=1,
     )
     db.add(run)
     await db.flush()
@@ -304,6 +314,13 @@ async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) ->
     playbook = await db.get(AutomationPlaybook, run.playbook_id)
     if playbook is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Playbook is unavailable.")
+    configured = _configured_actions()
+    unavailable = _unconfigured_actions(playbook.steps, configured)
+    if unavailable:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Delivery connector is not configured for action(s): {', '.join(unavailable)}",
+        )
 
     items = []
     for index, step in enumerate(playbook.steps):

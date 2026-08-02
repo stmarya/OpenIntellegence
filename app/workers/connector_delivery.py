@@ -16,6 +16,8 @@ from app.core.config import Settings, get_settings
 from app.db.base import get_session_factory
 from app.db.orchestration_models import AutomationOutbox
 
+P0_DELIVERABLE_ACTIONS = frozenset({"slack.notify", "jira.issue.create", "siem.push"})
+
 
 @dataclass(frozen=True)
 class DeliveryReceipt:
@@ -103,7 +105,7 @@ class SiemWebhookConnector:
     async def deliver(self, item: AutomationOutbox) -> DeliveryReceipt:
         headers = {"Idempotency-Key": item.idempotency_key}
         if self.token:
-            headers["Authorization"] = "******"
+            headers["Authorization"] = self.token
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
@@ -146,6 +148,10 @@ def registry(settings: Settings) -> dict[str, Connector]:
     return result
 
 
+def enabled_delivery_actions(settings: Settings) -> frozenset[str]:
+    return frozenset(registry(settings).keys())
+
+
 def retry_delay(attempts: int) -> timedelta:
     return timedelta(seconds=min(3600, 30 * (2 ** min(attempts, 7))))
 
@@ -163,7 +169,7 @@ class DeliveryWorker:
         )
         abandoned = and_(
             AutomationOutbox.state == "delivering",
-            AutomationOutbox.lease_until < now,
+            or_(AutomationOutbox.lease_until.is_(None), AutomationOutbox.lease_until < now),
         )
         stmt = (
             select(AutomationOutbox)
