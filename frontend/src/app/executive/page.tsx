@@ -1,25 +1,29 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { MetricCards, type Metric } from '@/components/MetricCards';
 import { FeatureGate } from '@/components/States';
-import { fetchList } from '@/lib/server-fetch';
+import { fetchJson, fetchList, unknown } from '@/lib/server-fetch';
 import { reasonOf, totalOf } from '@/lib/totals';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Executive intelligence' };
 
 type Row = { id: string };
+type FeedRow = { source?: string | null; status?: string | null; last_success_at?: string | null };
 
 export default async function ExecutiveIntelligencePage() {
-  const [vulnerabilities, alerts, correlations, cases, investigations, assets, agents, reports] = await Promise.all([
-    fetchList<Row>('/vulnerabilities?limit=1'),
-    fetchList<Row>('/alerts?limit=1'),
-    fetchList<Row>('/correlations?limit=1'),
-    fetchList<Row>('/cases?limit=1'),
-    fetchList<Row>('/investigations?limit=1'),
-    fetchList<Row>('/assets?limit=1'),
-    fetchList<Row>('/agents?limit=1'),
-    fetchList<Row>('/reports?limit=1'),
-  ]);
+  const [vulnerabilities, alerts, correlations, cases, investigations, assets, agents, reports, feeds] =
+    await Promise.all([
+      fetchList<Row>('/vulnerabilities?limit=1'),
+      fetchList<Row>('/alerts?limit=1'),
+      fetchList<Row>('/correlations?limit=1'),
+      fetchList<Row>('/cases?limit=1'),
+      fetchList<Row>('/investigations?limit=1'),
+      fetchList<Row>('/assets?limit=1'),
+      fetchList<Row>('/agents?limit=1'),
+      fetchList<Row>('/reports?limit=1'),
+      fetchJson<FeedRow[]>('/feeds'),
+    ]);
 
   const metrics: Metric[] = [
     {
@@ -62,6 +66,9 @@ export default async function ExecutiveIntelligencePage() {
     .filter((reason): reason is string => reason !== null);
   const uniqueFailures = Array.from(new Set(failures));
 
+  const feedRows = feeds.status === 'ok' ? feeds.data : [];
+  const silent = feedRows.filter((row) => row.status === 'never_run' || row.status === 'failed');
+
   return (
     <section className="content">
       <h1>Executive intelligence</h1>
@@ -71,6 +78,25 @@ export default async function ExecutiveIntelligencePage() {
         decision without first checking whether it is telling the truth.
       </p>
       <MetricCards metrics={metrics} />
+
+      <h2>Collection coverage behind these figures</h2>
+      {feeds.status === 'unavailable' ? (
+        <p className="muted">
+          Connector state could not be read ({feeds.reason}), so it is unknown how much of the intelligence estate was
+          collecting when these counts were taken.
+        </p>
+      ) : silent.length > 0 ? (
+        <p className="muted">
+          {silent.length} of {feedRows.length} sources are not currently collecting:{' '}
+          {silent.map((row) => unknown(row.source)).join(', ')}. The counts above therefore describe a partly observed
+          picture. Detail is on the <Link href="/connectors">connector surface</Link>.
+        </p>
+      ) : (
+        <p className="muted">
+          All {feedRows.length} registered sources have completed a run. That means data was accepted from each, not
+          that each upstream source was complete.
+        </p>
+      )}
 
       {uniqueFailures.length > 0 ? (
         <>
