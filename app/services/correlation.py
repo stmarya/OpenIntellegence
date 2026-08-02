@@ -192,7 +192,7 @@ async def resolve_evidence(
                 if hasattr(vuln.exploit_maturity, "value")
                 else str(vuln.exploit_maturity)
             )
-            _prov("cvss", "vulnerabilities", vuln.id, "present" if vuln.cvss_score else "partial")
+            _prov("cvss", "vulnerabilities", vuln.id, "present" if vuln.cvss_score is not None else "partial")
             _prov("kev", "vulnerabilities", vuln.id, "present")
             _prov("exploit", "vulnerabilities", vuln.id, "present")
         else:
@@ -275,7 +275,7 @@ async def resolve_evidence(
                 "cvss",
                 "vulnerabilities",
                 best_vuln.id if best_vuln else None,
-                "present" if best_vuln and best_vuln.cvss_score else "partial",
+                "present" if best_vuln and best_vuln.cvss_score is not None else "partial",
             )
         else:
             evidence["asset_criticality"] = hints.get("asset_criticality")

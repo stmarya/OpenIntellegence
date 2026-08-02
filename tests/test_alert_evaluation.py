@@ -398,6 +398,28 @@ class TestAssessWithResolvedEvidence:
         assert result.tier == "low"
         assert result.score == 0
 
+    def test_cvss_zero_reported_as_present_not_unknown(self) -> None:
+        """CVSS 0.0 is a valid known score; assess() must treat it as present."""
+        evidence = {
+            "cvss_score": 0.0,
+            "is_kev": False,
+            "exploit_maturity": None,
+            "asset_criticality": None,
+            "internet_exposed": False,
+            "sighting_count": 0,
+            "ransomware_relevant": False,
+        }
+        result = assess(evidence)
+        cvss_factors = [f for f in result.factors if f["key"] == "cvss"]
+        assert cvss_factors, "Expected a cvss factor to be present"
+        assert cvss_factors[0]["state"] == "present", (
+            "CVSS 0.0 must be reported as 'present', not 'unknown'"
+        )
+        unknown_factors = [f for f in result.factors if f["state"] == "unknown"]
+        assert not any(f["key"] == "cvss" for f in unknown_factors), (
+            "CVSS 0.0 must not appear in unknown factors"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Resolved evidence state
@@ -468,3 +490,176 @@ class TestAlertCorrelationCaseTransitions:
             "custom",
         }
         assert expected == set(_EVALUATORS.keys())
+
+
+# ---------------------------------------------------------------------------
+# Provenance state for CVSS 0.0 and null CVSS in resolve_evidence()
+# ---------------------------------------------------------------------------
+
+
+class TestResolveEvidenceCvssProvenance:
+    """Regression tests for the truthiness defect in resolve_evidence provenance.
+
+    A CVSS score of 0.0 is a *known* value (present), not an unknown one.
+    The fix replaces ``if vuln.cvss_score`` with ``if vuln.cvss_score is not None``
+    so that 0.0 is treated as present rather than partial.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cve_cvss_zero_provenance_is_present(self) -> None:
+        """CVE path: CVSS=0.0 on a real DB record must yield provenance state 'present'."""
+        from app.services.correlation import resolve_evidence
+
+        vuln = MagicMock()
+        vuln.id = "vuln-001"
+        vuln.cvss_score = 0.0
+        vuln.is_kev = False
+        vuln.exploit_maturity = MagicMock()
+        vuln.exploit_maturity.value = "none"
+
+        # DB execute side effects (in call order for entity_type="cve"):
+        # 1. Vulnerability lookup → returns vuln
+        # 2. AssetExposure/Asset join → returns no exposures
+        # 3. Sighting count → returns 0
+        # 4. RansomwareVictim lookup → returns None
+        def _make_result(scalar_one_or_none=None, all_=None, scalar_=None):
+            r = MagicMock()
+            r.scalar_one_or_none.return_value = scalar_one_or_none
+            r.all.return_value = all_ if all_ is not None else []
+            r.scalar.return_value = scalar_ if scalar_ is not None else 0
+            return r
+
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [
+            _make_result(scalar_one_or_none=vuln),   # Vulnerability lookup
+            _make_result(all_=[]),                    # AssetExposure/Asset join
+            _make_result(scalar_=0),                  # Sighting count
+            _make_result(scalar_one_or_none=None),    # RansomwareVictim
+        ]
+
+        result = await resolve_evidence(mock_db, "tenant-1", "cve", "CVE-2024-0001")
+
+        cvss_prov = [p for p in result.factor_provenance if p["factor"] == "cvss"]
+        assert cvss_prov, "Expected a cvss provenance entry"
+        assert cvss_prov[0]["state"] == "present", (
+            f"CVSS 0.0 must yield provenance state 'present', got {cvss_prov[0]['state']!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cve_cvss_none_provenance_is_partial(self) -> None:
+        """CVE path: CVSS=None on a DB record (score not yet populated) must yield 'partial'."""
+        from app.services.correlation import resolve_evidence
+
+        vuln = MagicMock()
+        vuln.id = "vuln-002"
+        vuln.cvss_score = None
+        vuln.is_kev = False
+        vuln.exploit_maturity = MagicMock()
+        vuln.exploit_maturity.value = "none"
+
+        def _make_result(scalar_one_or_none=None, all_=None, scalar_=None):
+            r = MagicMock()
+            r.scalar_one_or_none.return_value = scalar_one_or_none
+            r.all.return_value = all_ if all_ is not None else []
+            r.scalar.return_value = scalar_ if scalar_ is not None else 0
+            return r
+
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [
+            _make_result(scalar_one_or_none=vuln),
+            _make_result(all_=[]),
+            _make_result(scalar_=0),
+            _make_result(scalar_one_or_none=None),
+        ]
+
+        result = await resolve_evidence(mock_db, "tenant-1", "cve", "CVE-2024-0002")
+
+        cvss_prov = [p for p in result.factor_provenance if p["factor"] == "cvss"]
+        assert cvss_prov, "Expected a cvss provenance entry"
+        assert cvss_prov[0]["state"] == "partial", (
+            f"CVSS=None on a present record must yield provenance state 'partial', "
+            f"got {cvss_prov[0]['state']!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_asset_cvss_zero_provenance_is_present(self) -> None:
+        """Asset path: best_vuln.cvss_score=0.0 must yield provenance state 'present'."""
+        from app.services.correlation import resolve_evidence
+
+        asset = MagicMock()
+        asset.id = "asset-001"
+        asset.criticality = "high"
+
+        best_vuln = MagicMock()
+        best_vuln.id = "vuln-003"
+        best_vuln.cvss_score = 0.0
+
+        def _make_result(scalar_one_or_none=None, all_=None, scalar_=None):
+            r = MagicMock()
+            r.scalar_one_or_none.return_value = scalar_one_or_none
+            r.all.return_value = all_ if all_ is not None else []
+            r.scalar.return_value = scalar_ if scalar_ is not None else 0
+            return r
+
+        mock_db = AsyncMock()
+        # DB execute side effects for entity_type="asset":
+        # 1. Asset lookup → returns asset
+        # 2. KEV exposure lookup → returns None (no KEV)
+        # 3. Best vuln (highest CVSS) → returns best_vuln
+        # 4. Sighting count → 0
+        # 5. RansomwareVictim → None
+        mock_db.execute.side_effect = [
+            _make_result(scalar_one_or_none=asset),
+            _make_result(scalar_one_or_none=None),
+            _make_result(scalar_one_or_none=best_vuln),
+            _make_result(scalar_=0),
+            _make_result(scalar_one_or_none=None),
+        ]
+
+        result = await resolve_evidence(mock_db, "tenant-1", "asset", "asset-001")
+
+        cvss_prov = [p for p in result.factor_provenance if p["factor"] == "cvss"]
+        assert cvss_prov, "Expected a cvss provenance entry"
+        assert cvss_prov[0]["state"] == "present", (
+            f"CVSS 0.0 on asset path must yield provenance state 'present', "
+            f"got {cvss_prov[0]['state']!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_asset_cvss_none_provenance_is_partial(self) -> None:
+        """Asset path: best_vuln.cvss_score=None must yield provenance state 'partial'."""
+        from app.services.correlation import resolve_evidence
+
+        asset = MagicMock()
+        asset.id = "asset-002"
+        asset.criticality = "medium"
+
+        best_vuln = MagicMock()
+        best_vuln.id = "vuln-004"
+        best_vuln.cvss_score = None
+
+        def _make_result(scalar_one_or_none=None, all_=None, scalar_=None):
+            r = MagicMock()
+            r.scalar_one_or_none.return_value = scalar_one_or_none
+            r.all.return_value = all_ if all_ is not None else []
+            r.scalar.return_value = scalar_ if scalar_ is not None else 0
+            return r
+
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [
+            _make_result(scalar_one_or_none=asset),
+            _make_result(scalar_one_or_none=None),
+            _make_result(scalar_one_or_none=best_vuln),
+            _make_result(scalar_=0),
+            _make_result(scalar_one_or_none=None),
+        ]
+
+        result = await resolve_evidence(mock_db, "tenant-1", "asset", "asset-002")
+
+        cvss_prov = [p for p in result.factor_provenance if p["factor"] == "cvss"]
+        assert cvss_prov, "Expected a cvss provenance entry"
+        assert cvss_prov[0]["state"] == "partial", (
+            f"CVSS=None on asset path must yield provenance state 'partial', "
+            f"got {cvss_prov[0]['state']!r}"
+        )
+
