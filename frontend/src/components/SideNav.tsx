@@ -18,6 +18,7 @@ const NAVIGATION_SECTIONS = [
     items: [
       ['Command center', '/overview'],
       ['Executive intelligence', '/executive'],
+      ['My workspace', '/workspace'],
     ],
   },
   {
@@ -68,6 +69,8 @@ const NAVIGATION_SECTIONS = [
       ['Data sources', '/data-sources'],
       ['Data quality', '/data-quality'],
       ['Connectors', '/connectors'],
+      ['Import workbench', '/import'],
+      ['Integrations', '/integrations'],
       ['Automation', '/automation'],
       ['Developer portal', '/developer'],
     ],
@@ -75,6 +78,8 @@ const NAVIGATION_SECTIONS = [
   {
     label: 'Administration',
     items: [
+      ['Access and roles', '/access'],
+      ['Tenants and sharing', '/tenants'],
       ['Audit log', '/audit-log'],
       ['System health', '/system-health'],
       ['Settings', '/settings'],
