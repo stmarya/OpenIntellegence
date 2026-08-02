@@ -9,8 +9,11 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
+import subprocess
+import sys
+import textwrap
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -23,30 +26,35 @@ def test_models_importable_before_base_import() -> None:
     """app.db.models must import cleanly without relying on base.py's old
     circular late-imports.  Importing models first used to return a
     partially-initialised module; the registry module must resolve this."""
-    import importlib
-    import sys
+    repo_root = Path(__file__).resolve().parents[1]
+    script = textwrap.dedent(
+        """
+        import importlib
 
-    # Remove any cached copies so we exercise a clean import path.
-    for key in list(sys.modules.keys()):
-        if key.startswith("app.db"):
-            del sys.modules[key]
-
-    # Import the leaf model module first — this is the failure scenario.
-    models_mod = importlib.import_module("app.db.models")
-    assert hasattr(models_mod, "Indicator"), "Indicator class missing after fresh import"
-    assert hasattr(models_mod, "Asset"), "Asset class missing after fresh import"
-    assert hasattr(models_mod, "RansomwareVictim"), "RansomwareVictim class missing after fresh import"
+        models_mod = importlib.import_module("app.db.models")
+        assert hasattr(models_mod, "Indicator")
+        assert hasattr(models_mod, "Asset")
+        assert hasattr(models_mod, "RansomwareVictim")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "Fresh-process import of app.db.models failed.\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
 
 
 def test_registry_registers_all_tables() -> None:
     """After importing app.db.registry, Base.metadata must contain every
     table defined across all ORM modules."""
     import importlib
-    import sys
-
-    for key in list(sys.modules.keys()):
-        if key.startswith("app.db"):
-            del sys.modules[key]
 
     registry = importlib.import_module("app.db.registry")
     base = registry.Base
@@ -71,7 +79,6 @@ def test_registry_registers_all_tables() -> None:
 def test_base_has_no_circular_model_imports() -> None:
     """app.db.base must not import any ORM model modules at module level."""
     import ast
-    from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1] / "app" / "db" / "base.py").read_text()
     tree = ast.parse(source)
@@ -87,7 +94,7 @@ def test_base_has_no_circular_model_imports() -> None:
         "workflow_models",
     }
     found = []
-    for node in ast.walk(tree):
+    for node in tree.body:
         if isinstance(node, ast.ImportFrom):
             if node.module and node.module.startswith("app.db"):
                 for alias in node.names:
@@ -119,7 +126,7 @@ def test_claim_abandoned_null_lease_is_reclaimable() -> None:
     rather than a live DB, so it exercises the ORM expression logic
     deterministically without requiring a database connection.
     """
-    from sqlalchemy import and_, or_, String
+    from sqlalchemy import and_, or_
     from sqlalchemy.dialects import sqlite
 
     from app.db.orchestration_models import AutomationOutbox
@@ -132,7 +139,12 @@ def test_claim_abandoned_null_lease_is_reclaimable() -> None:
         or_(AutomationOutbox.lease_until.is_(None), AutomationOutbox.lease_until < now),
     )
 
-    compiled = str(abandoned.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+    compiled = str(
+        abandoned.compile(
+            dialect=sqlite.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
 
     # The IS NULL branch must be present.
     assert "IS NULL" in compiled, (
@@ -163,7 +175,12 @@ def test_old_abandoned_predicate_misses_null_lease() -> None:
         AutomationOutbox.lease_until < now,
     )
 
-    compiled = str(old_abandoned.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+    compiled = str(
+        old_abandoned.compile(
+            dialect=sqlite.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
 
     # Confirm the IS NULL guard is absent from the old predicate.
     assert "IS NULL" not in compiled, (
