@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     nvd_api_key: SecretStr | None = None
     otx_api_key: SecretStr | None = None
+    slack_webhook_url: SecretStr | None = None
+    jira_base_url: str | None = None
+    jira_email: str | None = None
+    jira_api_token: SecretStr | None = None
+    siem_webhook_url: SecretStr | None = None
+    siem_webhook_token: SecretStr | None = None
+    connector_delivery_timeout_seconds: float = Field(default=10.0, ge=1, le=60)
+    connector_max_attempts: int = Field(default=5, ge=1, le=20)
 
     # --- AI layer --------------------------------------------------------
     llm_api_key: SecretStr | None = None
@@ -74,9 +82,7 @@ class Settings(BaseSettings):
     # --- HTTP ------------------------------------------------------------
     # Explicit allowlist. A wildcard here combined with credentialed
     # requests would let any origin read a tenant's intelligence.
-    cors_origins: list[str] = Field(
-        default=["http://localhost:3000", "https://app.nogosec.id"]
-    )
+    cors_origins: list[str] = Field(default=["http://localhost:3000", "https://app.nogosec.id"])
 
     @property
     def is_production(self) -> bool:

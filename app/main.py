@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+import app.db.registry  # noqa: F401 – registers all ORM models at import time
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.deps import set_rate_limiter

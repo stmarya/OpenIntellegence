@@ -18,9 +18,9 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
-    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -31,7 +31,6 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,7 +47,7 @@ UuidType = String(36).with_variant(UUID(as_uuid=False), "postgresql")
 # ==========================================================================
 
 
-class Severity(str, enum.Enum):
+class Severity(enum.StrEnum):
     NONE = "none"
     LOW = "low"
     MEDIUM = "medium"
@@ -56,7 +55,7 @@ class Severity(str, enum.Enum):
     CRITICAL = "critical"
 
 
-class ExploitMaturity(str, enum.Enum):
+class ExploitMaturity(enum.StrEnum):
     """How weaponised a vulnerability is, in ascending order of urgency."""
 
     UNKNOWN = "unknown"
@@ -66,7 +65,7 @@ class ExploitMaturity(str, enum.Enum):
     WEAPONIZED = "weaponized"
 
 
-class AgentStatus(str, enum.Enum):
+class AgentStatus(enum.StrEnum):
     PENDING = "pending"
     ACTIVE = "active"
     STALE = "stale"
@@ -76,20 +75,20 @@ class AgentStatus(str, enum.Enum):
     REVOKED = "revoked"
 
 
-class ApiKeyStatus(str, enum.Enum):
+class ApiKeyStatus(enum.StrEnum):
     ACTIVE = "active"
     EXPIRING = "expiring"
     REVOKED = "revoked"
 
 
-class RunStatus(str, enum.Enum):
+class RunStatus(enum.StrEnum):
     RUNNING = "running"
     SUCCESS = "success"
     PARTIAL = "partial"
     FAILED = "failed"
 
 
-class ReportStatus(str, enum.Enum):
+class ReportStatus(enum.StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -152,7 +151,7 @@ class QuarantinedRecord(Base, TimestampMixin):
 
     __tablename__ = "quarantined_records"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_run_id: Mapped[str] = mapped_column(
         UuidType, ForeignKey("source_runs.id", ondelete="CASCADE"), nullable=False
@@ -170,7 +169,7 @@ class QuarantinedRecord(Base, TimestampMixin):
 class Vulnerability(Base, TimestampMixin):
     __tablename__ = "vulnerabilities"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
     cve_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
 
     title: Mapped[str | None] = mapped_column(String(512))
@@ -215,9 +214,9 @@ class Exploit(Base, TimestampMixin):
 
     __tablename__ = "exploits"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    vulnerability_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("vulnerabilities.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
+    vulnerability_id: Mapped[str | None] = mapped_column(
+        UuidType, ForeignKey("vulnerabilities.id", ondelete="CASCADE"), index=True
     )
 
     source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -248,7 +247,7 @@ class Exploit(Base, TimestampMixin):
 class ThreatActor(Base, TimestampMixin):
     __tablename__ = "threat_actors"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
     canonical_name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     aliases: Mapped[list[str]] = mapped_column(StrArray, default=list, nullable=False)
@@ -276,15 +275,15 @@ class RansomwareVictim(Base, TimestampMixin):
 
     __tablename__ = "ransomware_victims"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
 
     canonical_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(512), nullable=False)
     raw_names: Mapped[list[str]] = mapped_column(StrArray, default=list, nullable=False)
     domain: Mapped[str | None] = mapped_column(String(255), index=True)
 
-    actor_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("threat_actors.id", ondelete="SET NULL"), index=True
+    actor_id: Mapped[str | None] = mapped_column(
+        UuidType, ForeignKey("threat_actors.id", ondelete="SET NULL"), index=True
     )
     group_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 
@@ -307,7 +306,10 @@ class RansomwareVictim(Base, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint(
-            "canonical_key", "group_name", "discovered_at", name="uq_victim_dedupe"
+            "canonical_key",
+            "group_name",
+            "discovered_at",
+            name="uq_ransomware_victims_canonical_key_group_name_discovered_at",
         ),
         Index("ix_victims_group_discovered", "group_name", "discovered_at"),
     )
@@ -321,7 +323,7 @@ class RansomwareVictim(Base, TimestampMixin):
 class Indicator(Base, TimestampMixin):
     __tablename__ = "indicators"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
 
     indicator_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     value: Mapped[str] = mapped_column(String(1024), nullable=False)
@@ -339,9 +341,7 @@ class Indicator(Base, TimestampMixin):
     first_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
-    __table_args__ = (
-        UniqueConstraint("indicator_type", "value", name="uq_indicator_type_value"),
-    )
+    __table_args__ = (UniqueConstraint("indicator_type", "value", name="uq_indicators_type_value"),)
 
 
 # ==========================================================================
@@ -365,9 +365,7 @@ class Asset(Base, TimestampMixin):
     os_version: Mapped[str | None] = mapped_column(String(128))
     os_eol: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    ip_address: Mapped[str | None] = mapped_column(
-        String(45).with_variant(INET(), "postgresql")
-    )
+    ip_address: Mapped[str | None] = mapped_column(String(45).with_variant(INET(), "postgresql"))
     mac_address: Mapped[str | None] = mapped_column(String(32))
 
     exposed_cve_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -375,9 +373,10 @@ class Asset(Base, TimestampMixin):
 
     tags: Mapped[list[str]] = mapped_column(StrArray, default=list, nullable=False)
     meta: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "hostname", name="uq_asset_tenant_hostname"),
+        UniqueConstraint("tenant_id", "hostname", name="uq_assets_tenant_id_hostname"),
     )
 
 
@@ -390,7 +389,7 @@ class InstalledSoftware(Base, TimestampMixin):
 
     __tablename__ = "installed_software"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
     asset_id: Mapped[str] = mapped_column(
         UuidType, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -399,6 +398,9 @@ class InstalledSoftware(Base, TimestampMixin):
     version: Mapped[str | None] = mapped_column(String(128))
     vendor: Mapped[str | None] = mapped_column(String(255))
     cpe_uri: Mapped[str | None] = mapped_column(String(512), index=True)
+    first_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         UniqueConstraint("asset_id", "name", "version", name="uq_software_asset_name_version"),
@@ -410,16 +412,19 @@ class AssetExposure(Base, TimestampMixin):
 
     __tablename__ = "asset_exposures"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
     asset_id: Mapped[str] = mapped_column(
         UuidType, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    vulnerability_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("vulnerabilities.id", ondelete="CASCADE"), nullable=False,
+    vulnerability_id: Mapped[str] = mapped_column(
+        UuidType,
+        ForeignKey("vulnerabilities.id", ondelete="CASCADE"),
+        nullable=False,
         index=True,
     )
 
     matched_via: Mapped[str] = mapped_column(String(32), nullable=False)
+    match_evidence: Mapped[str | None] = mapped_column(Text)
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sla_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -455,9 +460,7 @@ class Agent(Base, TimestampMixin):
     cert_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     enrolled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), index=True
-    )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     last_inventory_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -484,6 +487,7 @@ class ApiKey(Base, TimestampMixin):
     prefix: Mapped[str] = mapped_column(String(16), nullable=False)
     # Argon2id hash of the secret half. The raw key is never stored.
     secret_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    masked_key: Mapped[str] = mapped_column(String(64), nullable=False)
 
     scopes: Mapped[list[str]] = mapped_column(StrArray, default=list, nullable=False)
     rate_limit_per_hour: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
@@ -494,6 +498,8 @@ class ApiKey(Base, TimestampMixin):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_reason: Mapped[str | None] = mapped_column(String(500))
+    single_use: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     created_by: Mapped[str | None] = mapped_column(String(255))
 
@@ -501,18 +507,17 @@ class ApiKey(Base, TimestampMixin):
 class AuditLog(Base, TimestampMixin):
     __tablename__ = "audit_logs"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
     tenant_id: Mapped[str | None] = mapped_column(UuidType, index=True)
 
-    actor_type: Mapped[str] = mapped_column(String(16), nullable=False)
-    actor_id: Mapped[str | None] = mapped_column(String(255))
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
     action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    resource_type: Mapped[str | None] = mapped_column(String(64))
-    resource_id: Mapped[str | None] = mapped_column(String(255))
+    entity_type: Mapped[str | None] = mapped_column(String(64))
+    entity_id: Mapped[str | None] = mapped_column(String(128))
 
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(String(512))
-    detail: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
+    details: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
 
 
 # ==========================================================================
@@ -547,6 +552,7 @@ class Report(Base, TimestampMixin):
     model: Mapped[str | None] = mapped_column(String(64))
     generation_seconds: Mapped[float | None] = mapped_column(Float)
     error_message: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[str | None] = mapped_column(String(128))
 
 
 class DocumentChunk(Base, TimestampMixin):
@@ -560,18 +566,18 @@ class DocumentChunk(Base, TimestampMixin):
 
     __tablename__ = "document_chunks"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
     tenant_id: Mapped[str | None] = mapped_column(UuidType, index=True)
 
     entity_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     entity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
 
     content: Mapped[str] = mapped_column(Text, nullable=False)
     #: Dimensionality must match Settings.embedding_dimensions; changing the
     #: embedding model requires a re-index, not just a config edit.
     embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
+    source: Mapped[str | None] = mapped_column(String(64))
     meta: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
 
-    __table_args__ = (
-        Index("ix_chunks_entity", "entity_type", "entity_id"),
-    )
+    __table_args__ = (Index("ix_chunks_entity", "entity_type", "entity_id"),)
