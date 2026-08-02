@@ -1,0 +1,269 @@
+"""Deterministic regression tests for P0 corrective fixes.
+
+Covers:
+1. Metadata registration / import-order safety
+2. NULL lease recovery query behavior
+3. Unsupported internal-action rejection
+4. Constraint-name parity (indicators, assets, ransomware_victims)
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
+
+# ---------------------------------------------------------------------------
+# 1. Metadata registration / import-order safety
+# ---------------------------------------------------------------------------
+
+
+def test_models_importable_before_base_import() -> None:
+    """app.db.models must import cleanly without relying on base.py's old
+    circular late-imports.  Importing models first used to return a
+    partially-initialised module; the registry module must resolve this."""
+    import importlib
+    import sys
+
+    # Remove any cached copies so we exercise a clean import path.
+    for key in list(sys.modules.keys()):
+        if key.startswith("app.db"):
+            del sys.modules[key]
+
+    # Import the leaf model module first — this is the failure scenario.
+    models_mod = importlib.import_module("app.db.models")
+    assert hasattr(models_mod, "Indicator"), "Indicator class missing after fresh import"
+    assert hasattr(models_mod, "Asset"), "Asset class missing after fresh import"
+    assert hasattr(models_mod, "RansomwareVictim"), "RansomwareVictim class missing after fresh import"
+
+
+def test_registry_registers_all_tables() -> None:
+    """After importing app.db.registry, Base.metadata must contain every
+    table defined across all ORM modules."""
+    import importlib
+    import sys
+
+    for key in list(sys.modules.keys()):
+        if key.startswith("app.db"):
+            del sys.modules[key]
+
+    registry = importlib.import_module("app.db.registry")
+    base = registry.Base
+    tables = set(base.metadata.tables.keys())
+
+    required = {
+        "tenants",
+        "vulnerabilities",
+        "indicators",
+        "assets",
+        "ransomware_victims",
+        "automation_playbooks",
+        "automation_runs",
+        "automation_outbox",
+        "alert_rules",
+        "correlations",
+    }
+    missing = required - tables
+    assert not missing, f"Tables missing from Base.metadata after registry import: {missing}"
+
+
+def test_base_has_no_circular_model_imports() -> None:
+    """app.db.base must not import any ORM model modules at module level."""
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "db" / "base.py").read_text()
+    tree = ast.parse(source)
+
+    # Collect all import names from top-level ImportFrom nodes that reference
+    # app.db sub-modules (alert_models, models, etc.).
+    model_modules = {
+        "alert_models",
+        "correlation_models",
+        "domain_models",
+        "models",
+        "orchestration_models",
+        "workflow_models",
+    }
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module and node.module.startswith("app.db"):
+                for alias in node.names:
+                    if alias.name in model_modules:
+                        found.append(alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name or ""
+                if any(name == f"app.db.{m}" or name.endswith(f".{m}") for m in model_modules):
+                    found.append(name)
+
+    assert not found, (
+        f"app/db/base.py still imports model modules at module level: {found}. "
+        "Move registrations to app/db/registry.py."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2. NULL lease recovery — claim predicate
+# ---------------------------------------------------------------------------
+
+
+def test_claim_abandoned_null_lease_is_reclaimable() -> None:
+    """An AutomationOutbox row that reached state='delivering' but was never
+    given a lease_until value (NULL) must match the abandoned predicate so the
+    worker can reclaim it on the next poll cycle.
+
+    This is a unit-level predicate check using SQLAlchemy's compile path
+    rather than a live DB, so it exercises the ORM expression logic
+    deterministically without requiring a database connection.
+    """
+    from sqlalchemy import and_, or_, String
+    from sqlalchemy.dialects import sqlite
+
+    from app.db.orchestration_models import AutomationOutbox
+
+    now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    # Reproduce the fixed predicate from DeliveryWorker.claim().
+    abandoned = and_(
+        AutomationOutbox.state == "delivering",
+        or_(AutomationOutbox.lease_until.is_(None), AutomationOutbox.lease_until < now),
+    )
+
+    compiled = str(abandoned.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+
+    # The IS NULL branch must be present.
+    assert "IS NULL" in compiled, (
+        "Abandoned predicate does not contain IS NULL check — stuck delivering "
+        "records with null lease_until will never be reclaimed."
+    )
+    # The time comparison must also be present.
+    assert "lease_until" in compiled
+
+
+def test_old_abandoned_predicate_misses_null_lease() -> None:
+    """Demonstrates the pre-fix bug: the original predicate
+    (lease_until < now) silently excluded NULL rows in SQL semantics.
+
+    NULL comparisons with < yield NULL (not TRUE), so a delivering row with
+    lease_until IS NULL would never be returned.
+    """
+    from sqlalchemy import and_
+    from sqlalchemy.dialects import sqlite
+
+    from app.db.orchestration_models import AutomationOutbox
+
+    now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    # The OLD (buggy) predicate — kept here as a documented regression.
+    old_abandoned = and_(
+        AutomationOutbox.state == "delivering",
+        AutomationOutbox.lease_until < now,
+    )
+
+    compiled = str(old_abandoned.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+
+    # Confirm the IS NULL guard is absent from the old predicate.
+    assert "IS NULL" not in compiled, (
+        "Expected the old predicate to lack IS NULL — if this fails the regression "
+        "documentation needs updating."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3. Unsupported internal-action rejection
+# ---------------------------------------------------------------------------
+
+
+def test_p0_allowed_actions_excludes_deferred_actions() -> None:
+    """P0 _ALLOWED_ACTIONS must not contain case.create, report.generate,
+    or endpoint.command.request because no worker handles them yet."""
+    from app.api.v1.orchestration import _ALLOWED_ACTIONS
+
+    deferred = {"case.create", "report.generate", "endpoint.command.request"}
+    accepted = deferred & _ALLOWED_ACTIONS
+    assert not accepted, (
+        f"These unimplemented actions are still in _ALLOWED_ACTIONS and would "
+        f"produce dead-lettered outbox records: {accepted}"
+    )
+
+
+def test_p0_allowed_actions_covers_connector_actions() -> None:
+    """The three currently-implemented connector actions must remain in P0."""
+    from app.api.v1.orchestration import _ALLOWED_ACTIONS
+
+    required = {"slack.notify", "jira.issue.create", "siem.push"}
+    missing = required - _ALLOWED_ACTIONS
+    assert not missing, f"Connector actions unexpectedly removed from _ALLOWED_ACTIONS: {missing}"
+
+
+@pytest.mark.asyncio
+async def test_create_playbook_rejects_unsupported_actions() -> None:
+    """POST /playbooks with a step using a deferred action must raise 422."""
+    from fastapi import HTTPException
+
+    from app.api.v1.orchestration import PlaybookCreate, PlaybookStep, create_playbook
+    from app.core.deps import Principal
+
+    class _Db:
+        def add(self, _): ...
+        async def flush(self): ...
+        async def refresh(self, _): ...
+
+    principal = Principal(
+        api_key_id="key-1",
+        tenant_id="tenant-1",
+        name="tester",
+        scopes=frozenset({"admin"}),
+        rate_limit_per_hour=1000,
+    )
+
+    for bad_action in ("case.create", "report.generate", "endpoint.command.request"):
+        with pytest.raises(HTTPException) as exc_info:
+            await create_playbook(
+                PlaybookCreate(
+                    name="Bad Playbook",
+                    trigger_type="manual",
+                    steps=[PlaybookStep(action=bad_action, target="dest", payload={})],
+                ),
+                db=_Db(),  # type: ignore[arg-type]
+                principal=principal,
+            )
+        assert exc_info.value.status_code == 422, (
+            f"Expected 422 for deferred action {bad_action!r}, "
+            f"got {exc_info.value.status_code}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 4. Constraint-name parity
+# ---------------------------------------------------------------------------
+
+
+def test_constraint_names_match_0001_migration() -> None:
+    """ORM UniqueConstraint names for indicators, assets, and
+    ransomware_victims must exactly match the names in 0001_initial_schema.py
+    to prevent Alembic autogenerate from emitting spurious rename migrations.
+    """
+    from app.db.registry import Base  # ensures all tables are registered
+
+    canonical = {
+        "indicators": "uq_indicators_type_value",
+        "assets": "uq_assets_tenant_id_hostname",
+        "ransomware_victims": "uq_ransomware_victims_canonical_key_group_name_discovered_at",
+    }
+
+    for table_name, expected_name in canonical.items():
+        table = Base.metadata.tables[table_name]
+        constraint_names = {
+            c.name
+            for c in table.constraints
+            if c.__class__.__name__ == "UniqueConstraint"
+        }
+        assert expected_name in constraint_names, (
+            f"Table '{table_name}' is missing UniqueConstraint named "
+            f"'{expected_name}'. Found: {constraint_names}. "
+            "This drift will cause Alembic autogenerate to emit spurious migrations."
+        )

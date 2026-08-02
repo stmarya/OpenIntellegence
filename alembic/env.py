@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.core.config import get_settings
-from app.db.base import Base  # noqa: F401
+from app.db.registry import Base  # noqa: F401  registers all ORM tables
 
 config = context.config
 if config.config_file_name is not None:
