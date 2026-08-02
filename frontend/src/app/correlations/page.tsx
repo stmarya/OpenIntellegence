@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { RiskBadge } from '@/components/RiskBadge';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -25,12 +26,12 @@ const columns: Column<CorrelationRow>[] = [
     header: 'Correlation',
     render: (row) => (
       <>
-        <Link href={`/correlations/${row.id}`}>
+        <Link href={`/correlations/${encodeURIComponent(row.id)}`}>
           <strong>{unknown(row.title)}</strong>
         </Link>
         <br />
         <small>
-          {unknown(row.primary_entity_type)} · {unknown(row.primary_entity_id)}
+          {unknown(row.primary_entity_type)} \u00b7 {unknown(row.primary_entity_id)}
         </small>
       </>
     ),
@@ -44,13 +45,15 @@ const columns: Column<CorrelationRow>[] = [
   {
     key: 'automation',
     header: 'Automation candidates',
-    render: (row) => <>{row.automation_candidates?.length ?? 0} proposed</>,
+    render: (row) =>
+      row.automation_candidates ? <>{row.automation_candidates.length} proposed</> : <>Not reported</>,
   },
   { key: 'evaluated', header: 'Evaluated', render: (row) => <small>{unknown(row.evaluated_at)}</small> },
 ];
 
-export default async function CorrelationsPage() {
-  const envelope = await fetchList<CorrelationRow>('/correlations');
+export default async function CorrelationsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<CorrelationRow>(withPageQuery('/correlations', state));
   return (
     <section className="content">
       <h1>Correlations</h1>
@@ -62,10 +65,16 @@ export default async function CorrelationsPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/correlations"
         emptyTitle="No correlations evaluated"
         emptyDetail="The API responded successfully and no correlation has been evaluated for this tenant."
         caption="An AI brief is withheld entirely when no supporting evidence was retrieved."
       />
+      <p className="muted">
+        A correlation links records that share an entity. It is a lead worth checking, not a confirmed incident, and the
+        factor breakdown on each correlation shows exactly why the score is what it is.
+      </p>
     </section>
   );
 }
