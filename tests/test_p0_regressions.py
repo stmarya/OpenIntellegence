@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import textwrap
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
@@ -24,61 +22,66 @@ import pytest
 
 def test_models_importable_before_base_import() -> None:
     """app.db.models must import cleanly without relying on base.py's old
-    circular late-imports.  Importing models first used to return a
-    partially-initialised module; the registry module must resolve this."""
-    repo_root = Path(__file__).resolve().parents[1]
-    script = textwrap.dedent(
-        """
-        import importlib
+    circular late-imports.
 
-        models_mod = importlib.import_module("app.db.models")
-        assert hasattr(models_mod, "Indicator")
-        assert hasattr(models_mod, "Asset")
-        assert hasattr(models_mod, "RansomwareVictim")
-        """
+    Runs in a subprocess so the test exercises a genuinely clean interpreter
+    state without mutating the current process's module cache (which would
+    invalidate class identities already held by other test modules).
+    """
+    script = (
+        "import app.db.models\n"
+        "assert hasattr(app.db.models, 'Indicator'), "
+        "'Indicator class missing after fresh import'\n"
+        "assert hasattr(app.db.models, 'Asset'), "
+        "'Asset class missing after fresh import'\n"
+        "assert hasattr(app.db.models, 'RansomwareVictim'), "
+        "'RansomwareVictim class missing after fresh import'\n"
     )
     result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=repo_root,
+        [sys.executable],
+        input=script,
         capture_output=True,
         text=True,
-        check=False,
     )
     assert result.returncode == 0, (
-        "Fresh-process import of app.db.models failed.\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}"
+        f"Clean import of app.db.models failed:\n{result.stderr}"
     )
 
 
 def test_registry_registers_all_tables() -> None:
     """After importing app.db.registry, Base.metadata must contain every
-    table defined across all ORM modules."""
-    import importlib
+    table defined across all ORM modules.
 
-    registry = importlib.import_module("app.db.registry")
-    base = registry.Base
-    tables = set(base.metadata.tables.keys())
-
-    required = {
-        "tenants",
-        "vulnerabilities",
-        "indicators",
-        "assets",
-        "ransomware_victims",
-        "automation_playbooks",
-        "automation_runs",
-        "automation_outbox",
-        "alert_rules",
-        "correlations",
-    }
-    missing = required - tables
-    assert not missing, f"Tables missing from Base.metadata after registry import: {missing}"
+    Runs in a subprocess to avoid mutating the current process's module cache.
+    """
+    required_csv = (
+        "tenants,vulnerabilities,indicators,assets,ransomware_victims,"
+        "automation_playbooks,automation_runs,automation_outbox,"
+        "alert_rules,correlations"
+    )
+    script = (
+        "import app.db.registry\n"
+        "tables = set(app.db.registry.Base.metadata.tables.keys())\n"
+        f"required = set('{required_csv}'.split(','))\n"
+        "missing = required - tables\n"
+        "assert not missing, "
+        "f'Tables missing from Base.metadata after registry import: {missing}'\n"
+    )
+    result = subprocess.run(
+        [sys.executable],
+        input=script,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"Registry did not populate all expected tables:\n{result.stderr}"
+    )
 
 
 def test_base_has_no_circular_model_imports() -> None:
     """app.db.base must not import any ORM model modules at module level."""
     import ast
+    from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1] / "app" / "db" / "base.py").read_text()
     tree = ast.parse(source)
@@ -94,7 +97,7 @@ def test_base_has_no_circular_model_imports() -> None:
         "workflow_models",
     }
     found = []
-    for node in tree.body:
+    for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             if node.module and node.module.startswith("app.db"):
                 for alias in node.names:
@@ -109,6 +112,41 @@ def test_base_has_no_circular_model_imports() -> None:
     assert not found, (
         f"app/db/base.py still imports model modules at module level: {found}. "
         "Move registrations to app/db/registry.py."
+    )
+
+
+def test_create_app_populates_base_metadata() -> None:
+    """create_app() must work without a live database and, because app/main.py
+    explicitly imports app.db.registry, Base.metadata must contain all ORM
+    tables after the factory runs.
+
+    This is the deterministic registration contract test: it proves that the
+    FastAPI application factory path is directly wired to the registry rather
+    than relying on an undocumented import side-effect.
+    """
+    from app.db.registry import Base
+    from app.main import create_app
+
+    app = create_app()
+    assert app is not None
+
+    tables = set(Base.metadata.tables.keys())
+    required = {
+        "tenants",
+        "vulnerabilities",
+        "indicators",
+        "assets",
+        "ransomware_victims",
+        "automation_playbooks",
+        "automation_runs",
+        "automation_outbox",
+        "alert_rules",
+        "correlations",
+    }
+    missing = required - tables
+    assert not missing, (
+        f"Tables missing from Base.metadata after create_app(): {missing}. "
+        "Ensure app/main.py imports app.db.registry at module level."
     )
 
 
@@ -140,10 +178,7 @@ def test_claim_abandoned_null_lease_is_reclaimable() -> None:
     )
 
     compiled = str(
-        abandoned.compile(
-            dialect=sqlite.dialect(),
-            compile_kwargs={"literal_binds": True},
-        )
+        abandoned.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True})
     )
 
     # The IS NULL branch must be present.
@@ -177,8 +212,7 @@ def test_old_abandoned_predicate_misses_null_lease() -> None:
 
     compiled = str(
         old_abandoned.compile(
-            dialect=sqlite.dialect(),
-            compile_kwargs={"literal_binds": True},
+            dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}
         )
     )
 
@@ -284,3 +318,4 @@ def test_constraint_names_match_0001_migration() -> None:
             f"'{expected_name}'. Found: {constraint_names}. "
             "This drift will cause Alembic autogenerate to emit spurious migrations."
         )
+

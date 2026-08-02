@@ -375,7 +375,9 @@ class Asset(Base, TimestampMixin):
     meta: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (UniqueConstraint("tenant_id", "hostname", name="uq_assets_tenant_id_hostname"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "hostname", name="uq_assets_tenant_id_hostname"),
+    )
 
 
 class InstalledSoftware(Base, TimestampMixin):
