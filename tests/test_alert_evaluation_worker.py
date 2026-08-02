@@ -7,6 +7,7 @@ import pytest
 from app.core.config import Settings
 from app.db.alert_models import Alert, AlertRule, Sighting
 from app.db.models import Agent, Asset, AssetExposure, Vulnerability
+from app.workers import alert_evaluation
 from app.workers.alert_evaluation import AlertCandidate, AlertEvaluationWorker
 
 NOW = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -46,6 +47,11 @@ class _FakeSession:
         return None
 
 
+class _FactorySession:
+    async def commit(self) -> None:
+        return None
+
+
 def _settings() -> Settings:
     return Settings()
 
@@ -70,6 +76,36 @@ async def test_custom_rule_is_explicitly_skipped() -> None:
     worker = AlertEvaluationWorker(_settings())
     result = await worker.evaluate_rule(session=None, rule=_rule("custom"), now=NOW)  # type: ignore[arg-type]
     assert result.skip_reason == "unsupported_custom_trigger"
+
+
+@pytest.mark.asyncio
+async def test_disabled_rule_is_skipped_in_run_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    worker = AlertEvaluationWorker(_settings())
+    disabled = _rule("ioc_sighting", enabled=False)
+
+    async def _fake_claim(_session, _limit=None):
+        return [disabled]
+
+    async def _should_not_evaluate(*_args, **_kwargs):
+        raise AssertionError("disabled rule should never be evaluated")
+
+    class _FakeFactoryContext:
+        async def __aenter__(self):
+            return _FactorySession()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    def _fake_factory():
+        return _FakeFactoryContext()
+
+    monkeypatch.setattr(alert_evaluation, "get_session_factory", lambda: _fake_factory)
+    worker.claim_rules = _fake_claim  # type: ignore[method-assign]
+    worker.evaluate_rule = _should_not_evaluate  # type: ignore[method-assign]
+
+    result = await worker.run_once()
+    assert result["processed"] == 1
+    assert result["skipped"] == 1
 
 
 @pytest.mark.asyncio
