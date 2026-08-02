@@ -86,21 +86,29 @@ def _verify_command_envelope(payload: dict, signing_key: str) -> str | None:
         return "Envelope missing required fields (issued_at, expires_at, signature)."
 
     try:
-        issued_at = datetime.fromisoformat(issued_at_raw)
-        expires_at = datetime.fromisoformat(expires_at_raw)
-    except (ValueError, TypeError):
+        # Normalise the trailing-Z shorthand to +00:00 so fromisoformat
+        # handles it identically on all Python 3.12+ versions.
+        issued_at = datetime.fromisoformat(issued_at_raw.replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(expires_at_raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError, AttributeError):
         return "Envelope timestamps are not valid ISO-8601."
 
+    # Timezone-naive timestamps are ambiguous and therefore rejected; the
+    # caller must supply an explicit UTC offset or the Z suffix.
+    if issued_at.tzinfo is None or expires_at.tzinfo is None:
+        return "Envelope timestamps must be timezone-aware (include UTC offset or Z suffix)."
+
     now = datetime.now(UTC)
-    if issued_at.tzinfo is None:
-        issued_at = issued_at.replace(tzinfo=UTC)
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
+
+    if expires_at <= issued_at:
+        return "Envelope expires_at must be strictly after issued_at."
 
     if now > expires_at:
         return f"Command envelope expired at {expires_at.isoformat()}."
 
     ttl = (expires_at - issued_at).total_seconds()
+    if ttl <= 0:
+        return "Envelope TTL must be positive."
     if ttl > _ENVELOPE_MAX_TTL_SECONDS:
         return (
             f"Envelope TTL {ttl:.0f}s exceeds the maximum of"

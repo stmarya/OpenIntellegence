@@ -1,15 +1,16 @@
 """Connector capability registry.
 
 Tracks which action adapters are currently enabled, combining external
-connectors (Slack, Jira, SIEM) with always-available internal handlers.
+connectors (Slack, Jira, SIEM) with internal handlers.
 Playbook creation and dispatch MUST validate against this registry so
 unavailable actions are rejected immediately rather than queued silently.
 
 External connectors are enabled only when their credentials are present in
-the environment.  Internal actions (case.create, report.generate,
-endpoint.command.request) are always registered; endpoint.command.request
-additionally requires COMMAND_SIGNING_KEY to be set before an item is
-delivered — that check happens in the worker, not here.
+the environment.  The internal actions ``case.create`` and
+``report.generate`` are always enabled.  ``endpoint.command.request`` is
+internal but requires ``COMMAND_SIGNING_KEY`` to be configured — it is
+registered as *disabled* at module load time and re-registered as *enabled*
+by ``sync_external_connectors`` when the key is present.
 """
 
 from __future__ import annotations
@@ -65,8 +66,9 @@ class CapabilityRegistry:
 
 capability_registry = CapabilityRegistry()
 
-# Internal actions are always available (credentials managed inside the
-# platform, not by external services).
+# case.create and report.generate are unconditionally available.
+# endpoint.command.request starts disabled; sync_external_connectors
+# promotes it to enabled once COMMAND_SIGNING_KEY is confirmed present.
 _INTERNAL_ACTIONS: dict[str, str] = {
     "case.create": "Create a new investigation case via the domain service.",
     "report.generate": "Generate a threat-intelligence report via the AI service.",
@@ -77,18 +79,28 @@ _INTERNAL_ACTIONS: dict[str, str] = {
     ),
 }
 
+_ALWAYS_ENABLED_INTERNAL: frozenset[str] = frozenset({"case.create", "report.generate"})
+
 for _action, _desc in _INTERNAL_ACTIONS.items():
     capability_registry.register(
-        ActionCapability(action=_action, kind="internal", enabled=True, description=_desc)
+        ActionCapability(
+            action=_action,
+            kind="internal",
+            enabled=_action in _ALWAYS_ENABLED_INTERNAL,
+            description=_desc,
+        )
     )
 
 
 def sync_external_connectors(connectors: dict) -> None:
     """Update external-connector and signing-key-dependent action enablement.
 
-    *connectors* is the dict returned by
-    ``app.workers.connector_delivery.build_all_connectors()``.  Call this once
-    during application startup after building the registry.
+    *connectors* is the **complete** connector map returned by
+    ``app.workers.connector_delivery.build_all_connectors()``, which
+    includes both external connectors and the internal action handlers.
+    It must be called *after* all handlers have been added to the map so
+    that ``endpoint.command.request`` is correctly marked enabled when
+    ``COMMAND_SIGNING_KEY`` is configured.
     """
     _external_actions: dict[str, str] = {
         "slack.notify": "Post a message to a Slack channel via webhook.",

@@ -151,6 +151,11 @@ def build_all_connectors(settings: Settings) -> dict[str, Connector]:
 
     Also synchronises the capability registry so the API can expose which
     actions are currently enabled.
+
+    Internal handlers are added to the map *before* calling
+    ``sync_external_connectors`` so that the registry correctly reflects
+    whether ``endpoint.command.request`` is enabled when
+    ``COMMAND_SIGNING_KEY`` is configured.
     """
     from app.workers.capability_registry import sync_external_connectors
     from app.workers.internal_actions import (
@@ -160,7 +165,6 @@ def build_all_connectors(settings: Settings) -> dict[str, Connector]:
     )
 
     external = registry(settings)
-    sync_external_connectors(external)
 
     connectors: dict[str, Connector] = {**external}
     connectors["case.create"] = CaseCreateAction()
@@ -173,6 +177,10 @@ def build_all_connectors(settings: Settings) -> dict[str, Connector]:
         connectors["endpoint.command.request"] = EndpointCommandAction(
             settings.command_signing_key.get_secret_value()
         )
+
+    # Sync the full connector map (including internal handlers) so the
+    # registry accurately reflects the enabled state of every action.
+    sync_external_connectors(connectors)
 
     return connectors
 

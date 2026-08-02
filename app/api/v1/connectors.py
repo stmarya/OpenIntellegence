@@ -40,6 +40,7 @@ class ConnectorHealthOut(BaseModel):
     enabled: bool
     total: int
     delivered: int
+    delivering: int
     dead_letter: int
     retry: int
     queued: int
@@ -64,6 +65,7 @@ class OutboxOut(BaseModel):
     replayed_from_id: str | None = None
     replayed_by: str | None = None
     replayed_at: datetime | None = None
+    replay_note: str | None = None
     created_at: datetime
 
 
@@ -116,9 +118,11 @@ async def connector_health(db: DbSession, principal: ReadPrincipal) -> list[Conn
     Returned for every registered action, even those with no outbox rows yet,
     so an absent action does not hide its zero-delivery state.
     """
-    # Aggregate outbox counts per (action, state) in one query.
-    stmt = select(AutomationOutbox.action, AutomationOutbox.state, func.count()).group_by(
-        AutomationOutbox.action, AutomationOutbox.state
+    # Aggregate outbox counts per (action, state) for the requesting tenant only.
+    stmt = (
+        select(AutomationOutbox.action, AutomationOutbox.state, func.count())
+        .where(AutomationOutbox.tenant_id == principal.tenant_id)
+        .group_by(AutomationOutbox.action, AutomationOutbox.state)
     )
     rows = (await db.execute(stmt)).all()
 
@@ -130,17 +134,25 @@ async def connector_health(db: DbSession, principal: ReadPrincipal) -> list[Conn
     result: list[ConnectorHealthOut] = []
     for cap in capability_registry.all_capabilities():
         c = counts.get(cap.action, {})
-        total = sum(c.values())
+        delivered = c.get("delivered", 0)
+        delivering = c.get("delivering", 0)
+        dead_letter = c.get("dead_letter", 0)
+        retry = c.get("retry", 0)
+        queued = c.get("queued", 0)
+        # total is the sum of all known states so it is always internally
+        # consistent, including any future states that share the same prefix.
+        total = delivered + delivering + dead_letter + retry + queued
         result.append(
             ConnectorHealthOut(
                 action=cap.action,
                 kind=cap.kind,
                 enabled=cap.enabled,
                 total=total,
-                delivered=c.get("delivered", 0),
-                dead_letter=c.get("dead_letter", 0),
-                retry=c.get("retry", 0),
-                queued=c.get("queued", 0),
+                delivered=delivered,
+                delivering=delivering,
+                dead_letter=dead_letter,
+                retry=retry,
+                queued=queued,
             )
         )
     return result
@@ -221,6 +233,7 @@ async def replay_outbox_item(
         replayed_from_id=original.id,
         replayed_by=actor,
         replayed_at=datetime.now(UTC),
+        replay_note=payload.note,
     )
     db.add(replay)
     await db.flush()

@@ -77,6 +77,7 @@ class AutomationOutbox(Base, TimestampMixin):
     replayed_from_id: Mapped[str | None] = mapped_column(UuidType, index=True)
     replayed_by: Mapped[str | None] = mapped_column(String(255))
     replayed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replay_note: Mapped[str | None] = mapped_column(Text)
 
 
 class CommandAuditLog(Base, TimestampMixin):
