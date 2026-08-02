@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
@@ -24,7 +25,9 @@ const columns: Column<ReportRow>[] = [
     header: 'Report',
     render: (row) => (
       <>
-        <strong>{unknown(row.title)}</strong>
+        <Link href={`/reports/${row.id}`}>
+          <strong>{unknown(row.title)}</strong>
+        </Link>
         <br />
         <small>{unknown(row.template)}</small>
       </>

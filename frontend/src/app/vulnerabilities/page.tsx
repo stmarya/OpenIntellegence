@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { DataTable, type Column } from '@/components/DataTable';
 import { RiskBadge } from '@/components/RiskBadge';
 import { StatusChip } from '@/components/StatusChip';
@@ -12,7 +13,9 @@ const columns: Column<VulnerabilityRow>[] = [
     header: 'CVE',
     render: (row) => (
       <>
-        <strong>{row.id}</strong>
+        <Link href={`/vulnerabilities/${row.id}`}>
+          <strong>{row.id}</strong>
+        </Link>
         <br />
         <small>{row.title}</small>
       </>

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { RiskBadge } from '@/components/RiskBadge';
@@ -24,7 +25,9 @@ const columns: Column<CorrelationRow>[] = [
     header: 'Correlation',
     render: (row) => (
       <>
-        <strong>{unknown(row.title)}</strong>
+        <Link href={`/correlations/${row.id}`}>
+          <strong>{unknown(row.title)}</strong>
+        </Link>
         <br />
         <small>
           {unknown(row.primary_entity_type)} · {unknown(row.primary_entity_id)}

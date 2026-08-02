@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
@@ -24,7 +25,9 @@ const columns: Column<CampaignRow>[] = [
     header: 'Campaign',
     render: (row) => (
       <>
-        <strong>{unknown(row.name)}</strong>
+        <Link href={`/campaigns/${row.id}`}>
+          <strong>{unknown(row.name)}</strong>
+        </Link>
         <br />
         <small>{row.actor_names?.length ? row.actor_names.join(', ') : 'No attributed actor'}</small>
       </>
