@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -19,6 +20,7 @@ from app.api.schemas import (
     VulnerabilityOut,
 )
 from app.core.deps import DbSession, Principal, Scope, require_scope
+from app.db.alert_models import Sighting
 from app.db.models import (
     AssetExposure,
     Indicator,
@@ -32,6 +34,35 @@ router = APIRouter()
 
 ReadPrincipal = Annotated[Principal, Depends(require_scope(Scope.READ))]
 IocPrincipal = Annotated[Principal, Depends(require_scope(Scope.IOC))]
+
+
+class SightingRef(BaseModel):
+    """A sighting as referenced from an indicator detail response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source: str
+    observed_at: datetime
+    asset_id: str | None = None
+    confidence: int | None = None
+
+
+class ActorDetail(BaseModel):
+    """Single threat actor with the victims that can be tied to its name."""
+
+    actor: ThreatActorOut
+    recent_victims: list[RansomwareVictimOut]
+    victim_match_basis: str
+
+
+class IndicatorDetail(BaseModel):
+    """Single indicator with the tenant sightings that reference its value."""
+
+    indicator: IndicatorOut
+    sightings: list[SightingRef]
+    sighting_match_basis: str
+    enrichment_state: str
 
 
 @router.get(
@@ -195,6 +226,74 @@ async def list_victims(
 
 
 @router.get(
+    "/ransomware/groups",
+    summary="Leak-site groups aggregated from victim records",
+)
+async def list_ransomware_groups(
+    db: DbSession,
+    principal: ReadPrincipal,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict:
+    """Aggregate victims by leak-site group.
+
+    This is a projection of victim rows, not a curated group registry. A
+    group that has posted no victim in the ingested window is absent from
+    this list, which is not evidence that the group is inactive.
+    """
+    grouped = (
+        select(
+            RansomwareVictim.group_name.label("group_name"),
+            func.count(RansomwareVictim.id).label("victim_count"),
+            func.max(RansomwareVictim.discovered_at).label("latest_victim_at"),
+            func.min(RansomwareVictim.discovered_at).label("earliest_victim_at"),
+            func.count(func.distinct(RansomwareVictim.country)).label("country_count"),
+        )
+        .group_by(RansomwareVictim.group_name)
+        .subquery()
+    )
+
+    total = await db.scalar(select(func.count()).select_from(grouped)) or 0
+    rows = (
+        await db.execute(
+            select(grouped)
+            .order_by(grouped.c.victim_count.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+
+    provenance = await build_provenance(
+        db, sources=("ransomlook", "ransomware_live", "dls_monitor")
+    )
+    provenance.note = (
+        "Groups are derived by aggregating ingested victim rows. Absence from "
+        "this list means no victim was ingested for that group, not that the "
+        "group is dormant."
+    )
+
+    return {
+        "data": [
+            {
+                "group_name": row.group_name,
+                "victim_count": int(row.victim_count or 0),
+                "country_count": int(row.country_count or 0),
+                "earliest_victim_at": row.earliest_victim_at,
+                "latest_victim_at": row.latest_victim_at,
+            }
+            for row in rows
+        ],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": offset + limit < total,
+        },
+        "provenance": provenance,
+    }
+
+
+@router.get(
     "/actors",
     response_model=ListResponse[ThreatActorOut],
     summary="List threat actors",
@@ -218,6 +317,58 @@ async def list_actors(
         data=[ThreatActorOut.model_validate(r) for r in rows],
         page=Page(limit=limit, offset=offset, total=total, has_more=offset + limit < total),
         provenance=await build_provenance(db, sources=("ransomlook", "threat_actors")),
+    )
+
+
+@router.get(
+    "/actors/{actor_id}",
+    response_model=ActorDetail,
+    summary="Threat actor detail",
+)
+async def get_actor(actor_id: str, db: DbSession, principal: ReadPrincipal) -> ActorDetail:
+    """Return one actor and the leak-site victims tied to its name.
+
+    The link between an actor record and a victim row is an alias match on
+    the leak-site group name. That is a weaker claim than attribution, so
+    the response states the basis rather than presenting the victims as an
+    established finding.
+    """
+    actor = (
+        await db.execute(select(ThreatActor).where(ThreatActor.id == actor_id))
+    ).scalar_one_or_none()
+    if actor is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Threat actor not found.")
+
+    key = (getattr(actor, "slug", None) or getattr(actor, "name", None) or "").lower()
+
+    victims: list[RansomwareVictim] = []
+    if key:
+        victims = list(
+            (
+                await db.execute(
+                    select(RansomwareVictim)
+                    .where(RansomwareVictim.group_name == key)
+                    .order_by(RansomwareVictim.discovered_at.desc())
+                    .limit(50)
+                )
+            ).scalars().all()
+        )
+        basis = (
+            f"Victims are matched where the leak-site group name equals '{key}'. "
+            "A victim published under a different alias for the same actor will "
+            "not appear here, and appearing here is an attacker claim rather than "
+            "a confirmed breach."
+        )
+    else:
+        basis = (
+            "This actor record carries no name or slug to match leak-site victims "
+            "against, so no victim list is claimed for it."
+        )
+
+    return ActorDetail(
+        actor=ThreatActorOut.model_validate(actor),
+        recent_victims=[RansomwareVictimOut.model_validate(v) for v in victims],
+        victim_match_basis=basis,
     )
 
 
@@ -270,6 +421,59 @@ async def list_iocs(
         data=[IndicatorOut.model_validate(r) for r in rows],
         page=Page(limit=limit, offset=offset, total=total, has_more=offset + limit < total),
         provenance=provenance,
+    )
+
+
+@router.get(
+    "/iocs/{indicator_id}",
+    response_model=IndicatorDetail,
+    summary="Indicator detail with tenant sightings",
+)
+async def get_indicator(
+    indicator_id: str, db: DbSession, principal: IocPrincipal
+) -> IndicatorDetail:
+    """Return one indicator plus the sightings this tenant reported for it.
+
+    An empty sighting list means this tenant reported none, which is not the
+    same as the indicator being absent from the estate. Telemetry coverage is
+    partial, and the response says so instead of implying an all-clear.
+    """
+    indicator = (
+        await db.execute(select(Indicator).where(Indicator.id == indicator_id))
+    ).scalar_one_or_none()
+    if indicator is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Indicator not found.")
+
+    value = getattr(indicator, "value", None)
+    sightings: list[Sighting] = []
+    if value:
+        sightings = list(
+            (
+                await db.execute(
+                    select(Sighting)
+                    .where(
+                        Sighting.tenant_id == principal.tenant_id,
+                        Sighting.entity_id == value,
+                    )
+                    .order_by(Sighting.observed_at.desc())
+                    .limit(100)
+                )
+            ).scalars().all()
+        )
+
+    return IndicatorDetail(
+        indicator=IndicatorOut.model_validate(indicator),
+        sightings=[SightingRef.model_validate(s) for s in sightings],
+        sighting_match_basis=(
+            "Sightings are matched on exact indicator value within this tenant. "
+            "No sighting recorded here means none was reported, not that the "
+            "indicator is absent from the estate."
+        ),
+        enrichment_state=(
+            "enriched"
+            if getattr(indicator, "verdict", None)
+            else "not_enriched"
+        ),
     )
 
 
