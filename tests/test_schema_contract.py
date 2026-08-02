@@ -43,3 +43,23 @@ def test_unique_constraints_present() -> None:
         if constraint.__class__.__name__ == "UniqueConstraint"
     }
     assert ("tenant_id", "fingerprint") in alert_uniques
+
+
+def test_correlation_evidence_resolution_columns_exist() -> None:
+    """resolution_status and manual_evidence must be present on correlations.
+
+    Added in migration 0008.  resolution_status carries a server_default so
+    pre-migration rows get a safe 'unavailable' value without a backfill.
+    """
+    cols = _table("correlations").c
+    assert "resolution_status" in cols
+    assert "manual_evidence" in cols
+
+
+def test_correlation_resolution_status_has_server_default() -> None:
+    """resolution_status must have a server_default so old rows stay valid."""
+    col = _table("correlations").c["resolution_status"]
+    assert col.server_default is not None, (
+        "resolution_status must carry a server_default='unavailable' "
+        "so rows written before migration 0008 remain valid."
+    )

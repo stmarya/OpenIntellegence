@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.core.deps import DbSession, Principal, Scope, require_scope
 from app.db.correlation_models import Correlation, CorrelationAiBrief
 from app.services.correlation import assess
+from app.services.evidence_resolver import EvidenceResolver, build_from_manual
 from app.services.provenance import build_provenance
 
 router = APIRouter()
@@ -28,10 +29,14 @@ class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class CorrelationEvaluate(BaseModel):
-    title: str = Field(min_length=3, max_length=512)
-    primary_entity_type: str = Field(min_length=2, max_length=64)
-    primary_entity_id: str = Field(min_length=1, max_length=255)
+class ManualEvidence(BaseModel):
+    """Caller-supplied evidence for development / analyst override.
+
+    Requires admin scope.  The assessment is always marked ``manual_input``
+    and the supplied values are preserved separately from source-resolved
+    evidence.
+    """
+
     cvss_score: float | None = Field(default=None, ge=0, le=10)
     is_kev: bool = False
     exploit_maturity: str | None = None
@@ -40,7 +45,24 @@ class CorrelationEvaluate(BaseModel):
     sighting_count: int = Field(default=0, ge=0)
     ransomware_relevant: bool = False
     source_refs: list[dict] = Field(default_factory=list)
+
+
+class CorrelationEvaluate(BaseModel):
+    """Request body for the evaluate endpoint.
+
+    The client supplies only entity identity and optional analyst context.
+    Scoring factors are resolved server-side from persisted platform records.
+
+    ``manual_evidence`` is an opt-in development/analyst-override field that
+    requires ``admin`` scope.  It marks the result as ``manual_input`` and
+    preserves supplied values separately; they never override resolved facts.
+    """
+
+    title: str = Field(min_length=3, max_length=512)
+    primary_entity_type: str = Field(min_length=2, max_length=64)
+    primary_entity_id: str = Field(min_length=1, max_length=255)
     notes: str | None = Field(default=None, max_length=4000)
+    manual_evidence: ManualEvidence | None = None
 
 
 class CorrelationOut(ORM):
@@ -48,11 +70,14 @@ class CorrelationOut(ORM):
     title: str
     primary_entity_type: str
     primary_entity_id: str
+    #: Explainable evidence snapshot; null fields are genuinely unknown, not zero.
     evidence: dict
     factor_breakdown: list
     risk_score: int
     risk_tier: str
     automation_candidates: list
+    #: "resolved" | "partial" | "manual_input" | "unavailable"
+    resolution_status: str
     evaluated_at: datetime
 
 
@@ -79,18 +104,59 @@ def _rag(db) -> RagService:
 async def evaluate(
     payload: CorrelationEvaluate, db: DbSession, principal: WritePrincipal
 ) -> CorrelationOut:
-    evidence = payload.model_dump()
-    outcome = assess(evidence)
+    """Evaluate a correlation by resolving evidence from platform records.
+
+    The caller supplies only entity identity and optional analyst notes.
+    Scoring factors are resolved server-side from persisted platform records.
+
+    If ``manual_evidence`` is provided the caller must hold ``admin`` scope;
+    the result is marked ``manual_input`` and supplied values are preserved
+    separately from source-resolved evidence.
+    """
+    if payload.manual_evidence is not None and not principal.has(Scope.ADMIN):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Supplying manual evidence requires admin scope.",
+                "required": [Scope.ADMIN],
+                "missing": [Scope.ADMIN],
+                "granted": sorted(principal.scopes),
+            },
+        )
+
+    if payload.manual_evidence is not None:
+        resolved = build_from_manual(
+            entity_type=payload.primary_entity_type,
+            entity_id=payload.primary_entity_id,
+            tenant_id=principal.tenant_id,
+            manual=payload.manual_evidence.model_dump(),
+            analyst_notes=payload.notes,
+        )
+    else:
+        resolver = EvidenceResolver(db, principal.tenant_id)
+        resolved = await resolver.resolve(
+            payload.primary_entity_type,
+            payload.primary_entity_id,
+            analyst_notes=payload.notes,
+        )
+
+    outcome = assess(resolved.to_scoring_dict())
+    snapshot = resolved.to_snapshot()
+    if payload.notes:
+        snapshot["analyst_notes"] = payload.notes
+
     record = Correlation(
         tenant_id=principal.tenant_id,
         title=payload.title,
         primary_entity_type=payload.primary_entity_type,
         primary_entity_id=payload.primary_entity_id,
-        evidence=evidence,
+        evidence=snapshot,
         factor_breakdown=outcome.factors,
         risk_score=outcome.score,
         risk_tier=outcome.tier,
         automation_candidates=outcome.automation_candidates,
+        resolution_status=resolved.resolution_status,
+        manual_evidence=resolved.manual_evidence,
         evaluated_at=datetime.now(UTC),
     )
     db.add(record)
@@ -166,6 +232,12 @@ async def get_correlation(
 async def generate_ai_brief(
     correlation_id: str, db: DbSession, principal: WritePrincipal
 ) -> AiBriefOut:
+    """Generate a grounded AI brief for a persisted correlation.
+
+    Uses the server-resolved evidence snapshot stored at evaluation time.
+    Cites retrieved workspace records.  Returns ``unverified`` status when
+    no supporting evidence exists or the resolution status is ``unavailable``.
+    """
     item = (
         await db.execute(
             select(Correlation).where(
@@ -176,12 +248,21 @@ async def generate_ai_brief(
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Correlation not found.")
 
+    resolution_note = (
+        "This correlation used manual analyst-supplied evidence "
+        "and was not source-resolved."
+        if item.resolution_status == "manual_input"
+        else f"Evidence resolution status: {item.resolution_status}."
+    )
     prompt = (
-        "Write a concise analyst brief for this computed correlation. "
+        "Write a concise analyst brief for this server-resolved correlation. "
         "Use only retrieved workspace records for factual claims beyond "
-        "the supplied computed evidence. Explicitly distinguish unknowns, "
-        "do not recommend automatic execution, and cite supporting records. "
-        "Computed evidence: "
+        "the supplied evidence. Explicitly distinguish unknowns; do not "
+        "recommend automatic execution; cite supporting records. "
+        + resolution_note
+        + " If resolution_status is 'unavailable' or 'partial', state that "
+        "the evidence is incomplete and the brief is unverified. "
+        "Resolved evidence: "
         + json.dumps(item.evidence)
         + ". Factor breakdown: "
         + json.dumps(item.factor_breakdown)
@@ -219,3 +300,4 @@ async def generate_ai_brief(
     db.add(brief)
     await db.flush()
     return AiBriefOut.model_validate(brief)
+

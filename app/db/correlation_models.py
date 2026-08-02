@@ -27,6 +27,14 @@ class Correlation(Base, TimestampMixin):
     evaluated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
+    # Resolution status tracks how evidence was obtained.
+    # "unavailable" is the server_default so pre-migration rows get a safe value.
+    resolution_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unavailable", server_default="unavailable"
+    )
+    # Preserved separately when a privileged caller supplies manual evidence.
+    # Never merged into the resolved evidence path.
+    manual_evidence: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
 
 
 class CorrelationAiBrief(Base, TimestampMixin):
