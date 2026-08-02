@@ -15,7 +15,9 @@ from app.ai.rag import LlmError, RagService
 from app.api.schemas import ListResponse, Page
 from app.core.config import get_settings
 from app.core.deps import DbSession, Principal, Scope, require_scope
+from app.db.alert_models import Sighting
 from app.db.correlation_models import Correlation, CorrelationAiBrief
+from app.db.models import Asset, AssetExposure, Indicator, Vulnerability
 from app.services.correlation import assess
 from app.services.provenance import build_provenance
 
@@ -28,19 +30,34 @@ class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# Supported primary entity types for server-side evidence resolution.
+# Only these types have known resolution paths; any other value is rejected
+# with HTTP 422. To add a new type, implement its resolution branch in
+# _resolve_evidence and extend this Literal.
+_SUPPORTED_ENTITY_TYPES = {"asset", "vulnerability", "indicator"}
+
+
 class CorrelationEvaluate(BaseModel):
+    """Input for correlation evidence evaluation.
+
+    Only entity identity and optional analyst notes are accepted from the
+    client. All scoring facts are derived from persisted platform records.
+    Legacy client-supplied scoring fields (cvss_score, is_kev, etc.) are
+    rejected; submit them through the ingest pipeline instead.
+
+    Supported primary_entity_type values: ``asset``, ``vulnerability``,
+    ``indicator``. Any other value returns HTTP 422.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(min_length=3, max_length=512)
-    primary_entity_type: str = Field(min_length=2, max_length=64)
+    primary_entity_type: Literal["asset", "vulnerability", "indicator"] = Field(
+        description="Entity type to resolve. Supported: asset, vulnerability, indicator."
+    )
     primary_entity_id: str = Field(min_length=1, max_length=255)
-    cvss_score: float | None = Field(default=None, ge=0, le=10)
-    is_kev: bool = False
-    exploit_maturity: str | None = None
-    asset_criticality: Literal["low", "medium", "high", "critical"] | None = None
-    internet_exposed: bool = False
-    sighting_count: int = Field(default=0, ge=0)
-    ransomware_relevant: bool = False
-    source_refs: list[dict] = Field(default_factory=list)
-    notes: str | None = Field(default=None, max_length=4000)
+    analyst_notes: str | None = Field(default=None, max_length=4000)
+    manual_annotation: dict | None = None
 
 
 class CorrelationOut(ORM):
@@ -73,14 +90,356 @@ def _rag(db) -> RagService:
     return RagService(db, get_settings(), httpx.AsyncClient())
 
 
+def _resolution_status(base: dict) -> str:
+    """Derive resolution status from evidence sections.
+
+    ``resolved``     – all applicable sections resolved with no unknown fields.
+    ``partial``      – at least one section resolved but some fields are unknown.
+    ``unavailable``  – no supporting persisted evidence found.
+    """
+    sections = (
+        "vulnerability_context",
+        "asset_context",
+        "asset_exposure",
+        "ioc_sightings",
+        "ransomware_relevance",
+    )
+    supporting = 0
+    unknown = 0
+    for section in sections:
+        value = base.get(section)
+        if not isinstance(value, dict):
+            continue
+        if value.get("available"):
+            supporting += 1
+            if value.get("unknown_fields"):
+                unknown += 1
+    if supporting == 0:
+        return "unavailable"
+    return "partial" if unknown else "resolved"
+
+
+def _empty_evidence(payload: CorrelationEvaluate) -> dict:
+    """Return the baseline evidence dict with all sections unavailable."""
+    return {
+        "entity": {"type": payload.primary_entity_type, "id": payload.primary_entity_id},
+        "analyst_notes": payload.analyst_notes,
+        "vulnerability_context": {
+            "available": False,
+            "cvss_score": None,
+            "is_kev": None,
+            "exploit_maturity": None,
+            "source_record_ids": [],
+            "unknown_fields": [],
+        },
+        "asset_context": {
+            "available": False,
+            "asset_id": None,
+            "criticality": None,
+            "internet_exposed": None,
+            "source_record_ids": [],
+            "unknown_fields": [],
+        },
+        "asset_exposure": {
+            "available": False,
+            "active_exposure_count": None,
+            "source_record_ids": [],
+            "unknown_fields": [],
+        },
+        "ioc_sightings": {
+            "available": False,
+            "count": None,
+            "source_record_ids": [],
+            "unknown_fields": [],
+        },
+        "ransomware_relevance": {
+            "available": False,
+            "is_relevant": None,
+            "source_record_ids": [],
+            "unknown_fields": [],
+        },
+        "provenance_references": [],
+    }
+
+
+async def _populate_sightings(
+    evidence: dict,
+    db: DbSession,
+    tenant_id: str,
+    *,
+    asset_id: str | None = None,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+) -> None:
+    """Populate ioc_sightings and ransomware_relevance evidence sections."""
+    stmt = select(Sighting).where(Sighting.tenant_id == tenant_id)
+    if asset_id is not None:
+        stmt = stmt.where(Sighting.asset_id == asset_id)
+    elif entity_type is not None and entity_id is not None:
+        stmt = stmt.where(
+            Sighting.entity_type == entity_type,
+            Sighting.entity_id == entity_id,
+        )
+    stmt = stmt.order_by(Sighting.observed_at.desc()).limit(500)
+    sightings = (await db.execute(stmt)).scalars().all()
+    if not sightings:
+        return
+    evidence["ioc_sightings"] = {
+        "available": True,
+        "count": len(sightings),
+        "source_record_ids": [s.id for s in sightings],
+        "unknown_fields": [],
+    }
+    relevance = [
+        x.context.get("ransomware_relevant")
+        for x in sightings
+        if isinstance(x.context, dict) and "ransomware_relevant" in x.context
+    ]
+    evidence["ransomware_relevance"] = {
+        "available": True,
+        "is_relevant": (
+            True if any(v is True for v in relevance) else False if relevance else None
+        ),
+        "source_record_ids": [s.id for s in sightings],
+        "unknown_fields": [] if relevance else ["is_relevant"],
+    }
+    evidence["provenance_references"].append(
+        {"type": "table", "name": "sightings", "record_ids": [s.id for s in sightings]}
+    )
+
+
+async def _resolve_asset_evidence(
+    payload: CorrelationEvaluate, db: DbSession, principal: Principal
+) -> dict:
+    """Resolve evidence for primary_entity_type == 'asset'."""
+    evidence = _empty_evidence(payload)
+
+    asset = (
+        await db.execute(
+            select(Asset).where(
+                Asset.id == payload.primary_entity_id,
+                Asset.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        evidence["resolution_status"] = "unavailable"
+        return evidence
+
+    evidence["asset_context"] = {
+        "available": True,
+        "asset_id": asset.id,
+        "criticality": asset.criticality,
+        "internet_exposed": None if asset.ip_address is None else True,
+        "source_record_ids": [asset.id],
+        "unknown_fields": [] if asset.ip_address is not None else ["internet_exposed"],
+    }
+    evidence["provenance_references"].append(
+        {"type": "table", "name": "assets", "record_id": asset.id}
+    )
+
+    exposure_rows = (
+        await db.execute(
+            select(AssetExposure, Vulnerability)
+            .join(Vulnerability, Vulnerability.id == AssetExposure.vulnerability_id)
+            .where(
+                AssetExposure.asset_id == asset.id,
+                AssetExposure.resolved_at.is_(None),
+            )
+            .order_by(Vulnerability.cvss_score.desc().nulls_last())
+        )
+    ).all()
+    if exposure_rows:
+        exposures = [row[0] for row in exposure_rows]
+        vulnerabilities = [row[1] for row in exposure_rows]
+        cvss_values = [v.cvss_score for v in vulnerabilities if v.cvss_score is not None]
+        is_kev_values = [bool(v.is_kev) for v in vulnerabilities]
+        exploit_values = [v.exploit_maturity.value for v in vulnerabilities if v.exploit_maturity]
+        evidence["asset_exposure"] = {
+            "available": True,
+            "active_exposure_count": len(exposures),
+            "source_record_ids": [x.id for x in exposures],
+            "unknown_fields": [],
+        }
+        evidence["vulnerability_context"] = {
+            "available": True,
+            "cvss_score": max(cvss_values) if cvss_values else None,
+            "is_kev": bool(any(is_kev_values)),
+            "exploit_maturity": exploit_values[0] if exploit_values else None,
+            "source_record_ids": [v.id for v in vulnerabilities],
+            "unknown_fields": [] if cvss_values else ["cvss_score"],
+        }
+        evidence["provenance_references"].append(
+            {"type": "table", "name": "asset_exposures", "record_ids": [x.id for x in exposures]}
+        )
+        evidence["provenance_references"].append(
+            {
+                "type": "table",
+                "name": "vulnerabilities",
+                "record_ids": [v.id for v in vulnerabilities],
+            }
+        )
+
+    await _populate_sightings(evidence, db, principal.tenant_id, asset_id=asset.id)
+    evidence["resolution_status"] = _resolution_status(evidence)
+    return evidence
+
+
+async def _resolve_vulnerability_evidence(
+    payload: CorrelationEvaluate, db: DbSession, principal: Principal
+) -> dict:
+    """Resolve evidence for primary_entity_type == 'vulnerability'.
+
+    Vulnerability records are global (no tenant_id). Tenant scoping is applied
+    through AssetExposure → Asset.tenant_id for the asset exposure context,
+    and through Sighting.tenant_id for sighting context.
+    """
+    evidence = _empty_evidence(payload)
+
+    vuln = (
+        await db.execute(
+            select(Vulnerability).where(Vulnerability.id == payload.primary_entity_id)
+        )
+    ).scalar_one_or_none()
+    if vuln is None:
+        evidence["resolution_status"] = "unavailable"
+        return evidence
+
+    cvss_unknown = vuln.cvss_score is None
+    exploit_val = vuln.exploit_maturity.value if vuln.exploit_maturity else None
+    evidence["vulnerability_context"] = {
+        "available": True,
+        "cvss_score": vuln.cvss_score,
+        "is_kev": bool(vuln.is_kev),
+        "exploit_maturity": exploit_val,
+        "source_record_ids": [vuln.id],
+        "unknown_fields": ["cvss_score"] if cvss_unknown else [],
+    }
+    evidence["provenance_references"].append(
+        {"type": "table", "name": "vulnerabilities", "record_id": vuln.id}
+    )
+
+    # Tenant-scoped asset exposure context for this vulnerability.
+    exposure_rows = (
+        await db.execute(
+            select(AssetExposure, Asset)
+            .join(Asset, Asset.id == AssetExposure.asset_id)
+            .where(
+                Asset.tenant_id == principal.tenant_id,
+                AssetExposure.vulnerability_id == vuln.id,
+                AssetExposure.resolved_at.is_(None),
+            )
+            .order_by(AssetExposure.detected_at.desc())
+            .limit(500)
+        )
+    ).all()
+    if exposure_rows:
+        exposures = [row[0] for row in exposure_rows]
+        assets = [row[1] for row in exposure_rows]
+        evidence["asset_exposure"] = {
+            "available": True,
+            "active_exposure_count": len(exposures),
+            "source_record_ids": [x.id for x in exposures],
+            "unknown_fields": [],
+        }
+        # Use the first/highest-criticality asset for asset_context.
+        primary_asset = assets[0]
+        evidence["asset_context"] = {
+            "available": True,
+            "asset_id": primary_asset.id,
+            "criticality": primary_asset.criticality,
+            "internet_exposed": None if primary_asset.ip_address is None else True,
+            "source_record_ids": [a.id for a in assets],
+            "unknown_fields": [] if primary_asset.ip_address is not None else ["internet_exposed"],
+        }
+        evidence["provenance_references"].append(
+            {"type": "table", "name": "asset_exposures", "record_ids": [x.id for x in exposures]}
+        )
+
+    evidence["resolution_status"] = _resolution_status(evidence)
+    return evidence
+
+
+async def _resolve_indicator_evidence(
+    payload: CorrelationEvaluate, db: DbSession, principal: Principal
+) -> dict:
+    """Resolve evidence for primary_entity_type == 'indicator'.
+
+    Indicator records are global (no tenant_id). Tenant scoping is applied
+    through Sighting.tenant_id when looking for corroborating sightings.
+    """
+    evidence = _empty_evidence(payload)
+
+    indicator = (
+        await db.execute(
+            select(Indicator).where(Indicator.id == payload.primary_entity_id)
+        )
+    ).scalar_one_or_none()
+    if indicator is None:
+        evidence["resolution_status"] = "unavailable"
+        return evidence
+
+    evidence["provenance_references"].append(
+        {"type": "table", "name": "indicators", "record_id": indicator.id}
+    )
+
+    # Tenant-scoped sightings for this indicator value/type.
+    await _populate_sightings(
+        evidence,
+        db,
+        principal.tenant_id,
+        entity_type=indicator.indicator_type,
+        entity_id=indicator.value,
+    )
+    evidence["resolution_status"] = _resolution_status(evidence)
+    return evidence
+
+
+async def _resolve_evidence(
+    payload: CorrelationEvaluate, db: DbSession, principal: Principal
+) -> dict:
+    """Dispatch to the appropriate resolver for the supported entity type."""
+    if payload.primary_entity_type == "asset":
+        return await _resolve_asset_evidence(payload, db, principal)
+    if payload.primary_entity_type == "vulnerability":
+        return await _resolve_vulnerability_evidence(payload, db, principal)
+    if payload.primary_entity_type == "indicator":
+        return await _resolve_indicator_evidence(payload, db, principal)
+    # Pydantic Literal validation prevents reaching here, but guard defensively.
+    evidence = _empty_evidence(payload)
+    evidence["resolution_status"] = "unavailable"
+    return evidence
+
+
 @router.post(
     "/correlations/evaluate", response_model=CorrelationOut, status_code=status.HTTP_201_CREATED
 )
 async def evaluate(
     payload: CorrelationEvaluate, db: DbSession, principal: WritePrincipal
 ) -> CorrelationOut:
-    evidence = payload.model_dump()
-    outcome = assess(evidence)
+    if payload.manual_annotation is not None and not principal.has(Scope.ADMIN):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Manual evidence annotation requires admin scope.",
+        )
+
+    evidence = await _resolve_evidence(payload, db, principal)
+    if payload.manual_annotation is not None:
+        evidence["manual_annotation"] = payload.manual_annotation
+        evidence["server_resolution_status"] = _resolution_status(evidence)
+        evidence["resolution_status"] = "manual_input"
+
+    scoring_input = {
+        "cvss_score": evidence["vulnerability_context"]["cvss_score"],
+        "is_kev": evidence["vulnerability_context"]["is_kev"],
+        "exploit_maturity": evidence["vulnerability_context"]["exploit_maturity"],
+        "asset_criticality": evidence["asset_context"]["criticality"],
+        "internet_exposed": evidence["asset_context"]["internet_exposed"],
+        "sighting_count": evidence["ioc_sightings"]["count"],
+        "ransomware_relevant": evidence["ransomware_relevance"]["is_relevant"],
+        "source_refs": evidence["provenance_references"],
+    }
+    outcome = assess(scoring_input)
     record = Correlation(
         tenant_id=principal.tenant_id,
         title=payload.title,
@@ -181,7 +540,7 @@ async def generate_ai_brief(
         "Use only retrieved workspace records for factual claims beyond "
         "the supplied computed evidence. Explicitly distinguish unknowns, "
         "do not recommend automatic execution, and cite supporting records. "
-        "Computed evidence: "
+        "Server-resolved evidence: "
         + json.dumps(item.evidence)
         + ". Factor breakdown: "
         + json.dumps(item.factor_breakdown)
@@ -198,12 +557,12 @@ async def generate_ai_brief(
         await service.client.aclose()
 
     citation_data = [citation.model_dump() for citation in citations]
-    if not citation_data:
+    if not citation_data or item.evidence.get("resolution_status") == "unavailable":
         brief = CorrelationAiBrief(
             correlation_id=item.id,
             status="unverified",
             content=(
-                "No supporting workspace records were retrieved. "
+                "No supporting persisted evidence was retrieved. "
                 "The AI brief is intentionally withheld; review the "
                 "deterministic evidence and source references instead."
             ),

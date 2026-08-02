@@ -200,6 +200,14 @@ hosts, and score-first ordering is how remediation queues end up ignored.
 This is the foundation slice: schema, normalisation, connector framework,
 REST API, agent gateway, API-key service and AI layer.
 
+Detection-and-response P1 additions (alert-evaluation worker and server-side
+correlation evidence resolution) are implemented with deterministic unit tests
+and contract checks, and remain pending runtime validation in a live stack.
+Supported correlation entity types are ``asset``, ``vulnerability``, and
+``indicator``; other types are explicitly rejected (HTTP 422). Cooldown
+aggregation is implemented cross-bucket-boundary safe. No live database,
+Docker, or network calls were exercised during development of the P1 work.
+
 Not yet done: the Prefect/Kafka orchestration layer, the TAXII 2.1 server,
 the OpenSearch and Neo4j integrations, and the outbound webhook emitter. The
 Go endpoint agent lives in a separate repository.

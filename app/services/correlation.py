@@ -16,9 +16,13 @@ class CorrelationAssessment:
 def assess(evidence: dict) -> CorrelationAssessment:
     factors: list[dict] = []
 
-    def add(key: str, label: str, points: int, present: bool) -> None:
-        if present:
+    def add(key: str, label: str, points: int, state: str) -> None:
+        if state == "present":
             factors.append({"key": key, "label": label, "points": points, "state": "present"})
+        elif state == "unknown":
+            factors.append({"key": key, "label": label, "points": 0, "state": "unknown"})
+        else:
+            factors.append({"key": key, "label": label, "points": 0, "state": "absent"})
 
     cvss = evidence.get("cvss_score")
     if cvss is not None:
@@ -26,17 +30,30 @@ def assess(evidence: dict) -> CorrelationAssessment:
             "cvss",
             f"CVSS {cvss}",
             20 if cvss >= 9 else 14 if cvss >= 7 else 6 if cvss >= 4 else 0,
-            True,
+            "present",
         )
     else:
-        factors.append({"key": "cvss", "label": "CVSS unknown", "points": 0, "state": "unknown"})
+        add("cvss", "CVSS unknown", 0, "unknown")
 
-    add("kev", "Known Exploited Vulnerability", 25, bool(evidence.get("is_kev")))
+    is_kev = evidence.get("is_kev")
+    add(
+        "kev",
+        "Known Exploited Vulnerability",
+        25,
+        "present" if is_kev is True else "absent" if is_kev is False else "unknown",
+    )
+    exploit_state = (
+        "present"
+        if evidence.get("exploit_maturity") in {"poc", "functional", "weaponized", "active"}
+        else "absent"
+        if evidence.get("exploit_maturity") is not None
+        else "unknown"
+    )
     add(
         "exploit",
         "Public or active exploit evidence",
         15,
-        evidence.get("exploit_maturity") in {"poc", "functional", "weaponized", "active"},
+        exploit_state,
     )
     criticality = {
         "critical": 20,
@@ -44,20 +61,50 @@ def assess(evidence: dict) -> CorrelationAssessment:
         "medium": 8,
         "low": 3,
     }.get(str(evidence.get("asset_criticality", "")).lower(), 0)
+    criticality_state = (
+        "present"
+        if criticality > 0
+        else "absent"
+        if evidence.get("asset_criticality") is not None
+        else "unknown"
+    )
     add(
         "asset_criticality",
         f"Asset criticality: {evidence.get('asset_criticality')}",
         criticality,
-        criticality > 0,
+        criticality_state,
     )
-    add("internet_exposure", "Internet-exposed asset", 15, bool(evidence.get("internet_exposed")))
-    sightings = max(0, min(int(evidence.get("sighting_count") or 0), 3))
-    add("sightings", f"{sightings} corroborating sighting(s)", sightings * 5, sightings > 0)
+    internet_exposed = evidence.get("internet_exposed")
+    add(
+        "internet_exposure",
+        "Internet-exposed asset",
+        15,
+        "present"
+        if internet_exposed is True
+        else "absent"
+        if internet_exposed is False
+        else "unknown",
+    )
+    raw_sightings = evidence.get("sighting_count")
+    sightings = None if raw_sightings is None else max(0, min(int(raw_sightings), 3))
+    add(
+        "sightings",
+        "Corroborating sighting(s)"
+        if sightings is None
+        else f"{sightings} corroborating sighting(s)",
+        0 if sightings is None else sightings * 5,
+        "unknown" if sightings is None else "present" if sightings > 0 else "absent",
+    )
+    ransomware_relevant = evidence.get("ransomware_relevant")
     add(
         "ransomware",
         "Ransomware or sector relevance",
         10,
-        bool(evidence.get("ransomware_relevant")),
+        "present"
+        if ransomware_relevant is True
+        else "absent"
+        if ransomware_relevant is False
+        else "unknown",
     )
 
     score = min(100, sum(int(x["points"]) for x in factors))
