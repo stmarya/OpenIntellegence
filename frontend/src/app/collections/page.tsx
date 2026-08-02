@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -31,7 +32,12 @@ const columns: Column<CollectionRow>[] = [
     ),
   },
   { key: 'owner', header: 'Owner', render: (row) => <>{row.owner ?? 'Unassigned'}</> },
-  { key: 'members', header: 'Members', render: (row) => <>{row.member_refs?.length ?? 0}</> },
+  {
+    key: 'members',
+    header: 'Members',
+    render: (row) =>
+      row.member_refs ? <>{row.member_refs.length}</> : <StatusChip label="Not reported" tone="unknown" />,
+  },
   {
     key: 'sharing',
     header: 'Visibility',
@@ -42,11 +48,17 @@ const columns: Column<CollectionRow>[] = [
         <StatusChip label="Private to owner" tone="pending" />
       ),
   },
-  { key: 'curated', header: 'Last curated', render: (row) => <small>{row.last_curated_at ?? 'Never'}</small> },
+  {
+    key: 'curated',
+    header: 'Last curated',
+    render: (row) =>
+      row.last_curated_at ? <small>{row.last_curated_at}</small> : <StatusChip label="Never curated" tone="unknown" />,
+  },
 ];
 
-export default async function CollectionsPage() {
-  const envelope = await fetchList<CollectionRow>('/collections');
+export default async function CollectionsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<CollectionRow>(withPageQuery('/collections', state));
   return (
     <section className="content">
       <h1>Collections</h1>
@@ -58,9 +70,15 @@ export default async function CollectionsPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/collections"
         emptyTitle="No collections"
         emptyDetail="The API responded successfully and no collection has been created for this tenant."
       />
+      <p className="muted">
+        Member records are not resolved into titles here. No endpoint expands a collection&apos;s membership, and
+        rendering opaque references as named entities would imply a lookup that did not happen.
+      </p>
     </section>
   );
 }
