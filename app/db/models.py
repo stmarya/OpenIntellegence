@@ -305,7 +305,12 @@ class RansomwareVictim(Base, TimestampMixin):
     source_run_id: Mapped[str | None] = mapped_column(UuidType, ForeignKey("source_runs.id"))
 
     __table_args__ = (
-        UniqueConstraint("canonical_key", "group_name", "discovered_at", name="uq_victim_dedupe"),
+        UniqueConstraint(
+            "canonical_key",
+            "group_name",
+            "discovered_at",
+            name="uq_ransomware_victims_canonical_key_group_name_discovered_at",
+        ),
         Index("ix_victims_group_discovered", "group_name", "discovered_at"),
     )
 
@@ -336,7 +341,7 @@ class Indicator(Base, TimestampMixin):
     first_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
-    __table_args__ = (UniqueConstraint("indicator_type", "value", name="uq_indicator_type_value"),)
+    __table_args__ = (UniqueConstraint("indicator_type", "value", name="uq_indicators_type_value"),)
 
 
 # ==========================================================================
@@ -370,7 +375,7 @@ class Asset(Base, TimestampMixin):
     meta: Mapped[dict] = mapped_column(JsonType, default=dict, nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (UniqueConstraint("tenant_id", "hostname", name="uq_asset_tenant_hostname"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "hostname", name="uq_assets_tenant_id_hostname"),)
 
 
 class InstalledSoftware(Base, TimestampMixin):

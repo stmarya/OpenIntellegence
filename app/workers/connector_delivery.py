@@ -163,7 +163,7 @@ class DeliveryWorker:
         )
         abandoned = and_(
             AutomationOutbox.state == "delivering",
-            AutomationOutbox.lease_until < now,
+            or_(AutomationOutbox.lease_until.is_(None), AutomationOutbox.lease_until < now),
         )
         stmt = (
             select(AutomationOutbox)

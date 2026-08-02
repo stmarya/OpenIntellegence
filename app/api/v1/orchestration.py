@@ -18,11 +18,15 @@ router = APIRouter()
 ReadPrincipal = Annotated[Principal, Depends(require_scope(Scope.READ))]
 WritePrincipal = Annotated[Principal, Depends(require_scope(Scope.WRITE))]
 _ALLOWED_ACTIONS = {
-    "case.create",
-    "report.generate",
     "slack.notify",
     "jira.issue.create",
     "siem.push",
+}
+# Actions deferred to later milestones — not yet wired to any worker.
+# Accepting them now would produce undeliverable outbox records.
+_DEFERRED_ACTIONS = {
+    "case.create",
+    "report.generate",
     "endpoint.command.request",
 }
 
@@ -170,9 +174,7 @@ async def propose_run(payload: RunCreate, db: DbSession, principal: WritePrincip
     if playbook is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Enabled playbook not found.")
 
-    required = (
-        2 if any(step.get("action") == "endpoint.command.request" for step in playbook.steps) else 1
-    )
+    required = 1
     run = AutomationRun(
         tenant_id=principal.tenant_id,
         playbook_id=playbook.id,
