@@ -21,5 +21,6 @@ Inventory is additive and versioned so historical posture remains auditable.
 
 ## Explicit non-capabilities
 
-The agent has no remote shell, no arbitrary command execution, and no自动 dispatch path. Only allowlisted
-intents are representable, and delivery of those intents is out of scope for the current batches.
+The agent has no remote shell, no arbitrary command execution, and no autonomous dispatch path. Only
+allowlisted intents are representable, and delivery of those intents is out of scope for the current
+batches.
