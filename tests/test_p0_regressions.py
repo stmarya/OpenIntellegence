@@ -9,8 +9,9 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
+import subprocess
+import sys
+from datetime import UTC, datetime
 
 import pytest
 
@@ -21,51 +22,60 @@ import pytest
 
 def test_models_importable_before_base_import() -> None:
     """app.db.models must import cleanly without relying on base.py's old
-    circular late-imports.  Importing models first used to return a
-    partially-initialised module; the registry module must resolve this."""
-    import importlib
-    import sys
+    circular late-imports.
 
-    # Remove any cached copies so we exercise a clean import path.
-    for key in list(sys.modules.keys()):
-        if key.startswith("app.db"):
-            del sys.modules[key]
-
-    # Import the leaf model module first — this is the failure scenario.
-    models_mod = importlib.import_module("app.db.models")
-    assert hasattr(models_mod, "Indicator"), "Indicator class missing after fresh import"
-    assert hasattr(models_mod, "Asset"), "Asset class missing after fresh import"
-    assert hasattr(models_mod, "RansomwareVictim"), "RansomwareVictim class missing after fresh import"
+    Runs in a subprocess so the test exercises a genuinely clean interpreter
+    state without mutating the current process's module cache (which would
+    invalidate class identities already held by other test modules).
+    """
+    script = (
+        "import app.db.models\n"
+        "assert hasattr(app.db.models, 'Indicator'), "
+        "'Indicator class missing after fresh import'\n"
+        "assert hasattr(app.db.models, 'Asset'), "
+        "'Asset class missing after fresh import'\n"
+        "assert hasattr(app.db.models, 'RansomwareVictim'), "
+        "'RansomwareVictim class missing after fresh import'\n"
+    )
+    result = subprocess.run(
+        [sys.executable],
+        input=script,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"Clean import of app.db.models failed:\n{result.stderr}"
+    )
 
 
 def test_registry_registers_all_tables() -> None:
     """After importing app.db.registry, Base.metadata must contain every
-    table defined across all ORM modules."""
-    import importlib
-    import sys
+    table defined across all ORM modules.
 
-    for key in list(sys.modules.keys()):
-        if key.startswith("app.db"):
-            del sys.modules[key]
-
-    registry = importlib.import_module("app.db.registry")
-    base = registry.Base
-    tables = set(base.metadata.tables.keys())
-
-    required = {
-        "tenants",
-        "vulnerabilities",
-        "indicators",
-        "assets",
-        "ransomware_victims",
-        "automation_playbooks",
-        "automation_runs",
-        "automation_outbox",
-        "alert_rules",
-        "correlations",
-    }
-    missing = required - tables
-    assert not missing, f"Tables missing from Base.metadata after registry import: {missing}"
+    Runs in a subprocess to avoid mutating the current process's module cache.
+    """
+    required_csv = (
+        "tenants,vulnerabilities,indicators,assets,ransomware_victims,"
+        "automation_playbooks,automation_runs,automation_outbox,"
+        "alert_rules,correlations"
+    )
+    script = (
+        "import app.db.registry\n"
+        "tables = set(app.db.registry.Base.metadata.tables.keys())\n"
+        f"required = set('{required_csv}'.split(','))\n"
+        "missing = required - tables\n"
+        "assert not missing, "
+        "f'Tables missing from Base.metadata after registry import: {missing}'\n"
+    )
+    result = subprocess.run(
+        [sys.executable],
+        input=script,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"Registry did not populate all expected tables:\n{result.stderr}"
+    )
 
 
 def test_base_has_no_circular_model_imports() -> None:
@@ -105,6 +115,41 @@ def test_base_has_no_circular_model_imports() -> None:
     )
 
 
+def test_create_app_populates_base_metadata() -> None:
+    """create_app() must work without a live database and, because app/main.py
+    explicitly imports app.db.registry, Base.metadata must contain all ORM
+    tables after the factory runs.
+
+    This is the deterministic registration contract test: it proves that the
+    FastAPI application factory path is directly wired to the registry rather
+    than relying on an undocumented import side-effect.
+    """
+    from app.db.registry import Base
+    from app.main import create_app
+
+    app = create_app()
+    assert app is not None
+
+    tables = set(Base.metadata.tables.keys())
+    required = {
+        "tenants",
+        "vulnerabilities",
+        "indicators",
+        "assets",
+        "ransomware_victims",
+        "automation_playbooks",
+        "automation_runs",
+        "automation_outbox",
+        "alert_rules",
+        "correlations",
+    }
+    missing = required - tables
+    assert not missing, (
+        f"Tables missing from Base.metadata after create_app(): {missing}. "
+        "Ensure app/main.py imports app.db.registry at module level."
+    )
+
+
 # ---------------------------------------------------------------------------
 # 2. NULL lease recovery — claim predicate
 # ---------------------------------------------------------------------------
@@ -119,7 +164,7 @@ def test_claim_abandoned_null_lease_is_reclaimable() -> None:
     rather than a live DB, so it exercises the ORM expression logic
     deterministically without requiring a database connection.
     """
-    from sqlalchemy import and_, or_, String
+    from sqlalchemy import and_, or_
     from sqlalchemy.dialects import sqlite
 
     from app.db.orchestration_models import AutomationOutbox
@@ -132,7 +177,9 @@ def test_claim_abandoned_null_lease_is_reclaimable() -> None:
         or_(AutomationOutbox.lease_until.is_(None), AutomationOutbox.lease_until < now),
     )
 
-    compiled = str(abandoned.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+    compiled = str(
+        abandoned.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True})
+    )
 
     # The IS NULL branch must be present.
     assert "IS NULL" in compiled, (
@@ -163,7 +210,11 @@ def test_old_abandoned_predicate_misses_null_lease() -> None:
         AutomationOutbox.lease_until < now,
     )
 
-    compiled = str(old_abandoned.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+    compiled = str(
+        old_abandoned.compile(
+            dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
 
     # Confirm the IS NULL guard is absent from the old predicate.
     assert "IS NULL" not in compiled, (
@@ -267,3 +318,4 @@ def test_constraint_names_match_0001_migration() -> None:
             f"'{expected_name}'. Found: {constraint_names}. "
             "This drift will cause Alembic autogenerate to emit spurious migrations."
         )
+
