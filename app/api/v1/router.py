@@ -12,6 +12,7 @@ from app.api.v1 import (
     correlations,
     discovery,
     domains,
+    endpoint_commands,
     entity_details,
     intel,
     orchestration,
@@ -31,3 +32,4 @@ api_router.include_router(orchestration.router, tags=["Orchestration"])
 api_router.include_router(assets.router, tags=["Assets & Agents"])
 api_router.include_router(admin.router, tags=["Administration"])
 api_router.include_router(ai.router, tags=["AI"])
+api_router.include_router(endpoint_commands.router, tags=["Endpoint Commands"])

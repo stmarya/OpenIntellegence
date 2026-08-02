@@ -11,6 +11,30 @@ from app.db.base import Base, TimestampMixin
 from app.db.models import JsonType, UuidType
 
 
+class AutomationOutboxReplayHistory(Base, TimestampMixin):
+    """Append-only audit record for every dead-letter replay attempt.
+
+    A new row is written transactionally with the outbox state reset so the
+    replay chain is never lost even when a replayed record later dead-letters
+    again.
+    """
+
+    __tablename__ = "automation_outbox_replay_history"
+
+    id: Mapped[str] = mapped_column(UuidType, primary_key=True)
+    outbox_id: Mapped[str] = mapped_column(
+        UuidType,
+        ForeignKey("automation_outbox.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tenant_id: Mapped[str] = mapped_column(UuidType, nullable=False, index=True)
+    replayed_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_idempotency_key: Mapped[str] = mapped_column(String(320), nullable=False)
+    new_idempotency_key: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    replayed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class AutomationPlaybook(Base, TimestampMixin):
     __tablename__ = "automation_playbooks"
 

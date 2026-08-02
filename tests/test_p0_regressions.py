@@ -229,12 +229,13 @@ def test_old_abandoned_predicate_misses_null_lease() -> None:
 
 
 def test_p0_allowed_actions_excludes_deferred_actions() -> None:
-    """P0 _ALLOWED_ACTIONS must not contain case.create, report.generate,
-    or endpoint.command.request because no worker handles them yet."""
+    """_ALLOWED_ACTIONS must not contain endpoint.command.request because no
+    worker handles it yet.  case.create and report.generate are now included
+    in _ALLOWED_ACTIONS as they have internal workers (Stage 3)."""
     from app.api.v1.orchestration import _ALLOWED_ACTIONS
 
-    deferred = {"case.create", "report.generate", "endpoint.command.request"}
-    accepted = deferred & _ALLOWED_ACTIONS
+    still_deferred = {"endpoint.command.request"}
+    accepted = still_deferred & _ALLOWED_ACTIONS
     assert not accepted, (
         f"These unimplemented actions are still in _ALLOWED_ACTIONS and would "
         f"produce dead-lettered outbox records: {accepted}"
@@ -250,6 +251,18 @@ def test_p0_allowed_actions_covers_connector_actions() -> None:
     assert not missing, f"Connector actions unexpectedly removed from _ALLOWED_ACTIONS: {missing}"
 
 
+def test_stage3_internal_actions_are_in_allowed() -> None:
+    """case.create and report.generate must be in _ALLOWED_ACTIONS now that
+    internal workers are implemented (Stage 3)."""
+    from app.api.v1.orchestration import _ALLOWED_ACTIONS
+
+    required = {"case.create", "report.generate"}
+    missing = required - _ALLOWED_ACTIONS
+    assert not missing, (
+        f"Internal actions not yet in _ALLOWED_ACTIONS (workers not registered?): {missing}"
+    )
+
+
 class _ScalarResult:
     def __init__(self, value):
         self._value = value
@@ -261,7 +274,8 @@ class _ScalarResult:
 @pytest.mark.asyncio
 async def test_propose_run_rejects_stale_playbook_actions_before_run_creation() -> None:
     """Persisted/admin-inserted playbooks containing deferred actions must be
-    rejected at propose_run before any AutomationRun is created."""
+    rejected at propose_run before any AutomationRun is created.
+    endpoint.command.request remains deferred (no worker in this release)."""
     from fastapi import HTTPException
 
     from app.api.v1.orchestration import RunCreate, propose_run
@@ -285,7 +299,7 @@ async def test_propose_run_rejects_stale_playbook_actions_before_run_creation() 
                     tenant_id="tenant-1",
                     name="stale",
                     trigger_type="manual",
-                    steps=[{"action": "case.create", "target": "t", "payload": {}}],
+                    steps=[{"action": "endpoint.command.request", "target": "t", "payload": {}}],
                     enabled=True,
                 )
             )
@@ -319,7 +333,7 @@ async def test_propose_run_rejects_stale_playbook_actions_before_run_creation() 
             principal=principal,
         )
     assert exc_info.value.status_code == 422
-    assert "case.create" in str(exc_info.value.detail)
+    assert "endpoint.command.request" in str(exc_info.value.detail)
     assert db.add_calls == 0
     assert db.flush_calls == 0
 
@@ -327,7 +341,8 @@ async def test_propose_run_rejects_stale_playbook_actions_before_run_creation() 
 @pytest.mark.asyncio
 async def test_dispatch_run_rejects_stale_playbook_actions_before_outbox_creation() -> None:
     """Persisted/admin-inserted playbooks containing deferred actions must be
-    rejected at dispatch_run before any AutomationOutbox is created."""
+    rejected at dispatch_run before any AutomationOutbox is created.
+    endpoint.command.request remains deferred (no worker in this release)."""
     from fastapi import HTTPException
 
     from app.api.v1.orchestration import dispatch_run
@@ -352,7 +367,7 @@ async def test_dispatch_run_rejects_stale_playbook_actions_before_outbox_creatio
         tenant_id="tenant-1",
         name="stale",
         trigger_type="manual",
-        steps=[{"action": "report.generate", "target": "t", "payload": {}}],
+        steps=[{"action": "endpoint.command.request", "target": "t", "payload": {}}],
         enabled=True,
     )
 
@@ -389,7 +404,7 @@ async def test_dispatch_run_rejects_stale_playbook_actions_before_outbox_creatio
     with pytest.raises(HTTPException) as exc_info:
         await dispatch_run("run-1", db=db, principal=principal)  # type: ignore[arg-type]
     assert exc_info.value.status_code == 422
-    assert "report.generate" in str(exc_info.value.detail)
+    assert "endpoint.command.request" in str(exc_info.value.detail)
     assert db.add_calls == 0
     assert db.flush_calls == 0
     assert run.state == "approved"
@@ -397,7 +412,8 @@ async def test_dispatch_run_rejects_stale_playbook_actions_before_outbox_creatio
 
 @pytest.mark.asyncio
 async def test_create_playbook_rejects_unsupported_actions() -> None:
-    """POST /playbooks with a step using a deferred action must raise 422."""
+    """POST /playbooks with a step using a deferred action must raise 422.
+    endpoint.command.request is the only remaining deferred action."""
     from fastapi import HTTPException
 
     from app.api.v1.orchestration import PlaybookCreate, PlaybookStep, create_playbook
@@ -416,7 +432,7 @@ async def test_create_playbook_rejects_unsupported_actions() -> None:
         rate_limit_per_hour=1000,
     )
 
-    for bad_action in ("case.create", "report.generate", "endpoint.command.request"):
+    for bad_action in ("endpoint.command.request",):
         with pytest.raises(HTTPException) as exc_info:
             await create_playbook(
                 PlaybookCreate(
