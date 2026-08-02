@@ -5,14 +5,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from app.api.v1.orchestration import (
     RunCreate,
     _allowed_actions,
     _unconfigured_actions,
     propose_run,
+    router,
 )
-from app.core.deps import Principal
+from app.core.deps import Principal, get_principal
+from app.db.base import get_db
 from app.db.orchestration_models import AutomationPlaybook, AutomationRun
 
 
@@ -46,6 +50,25 @@ class _FakeDb:
                 item.created_at = now
 
 
+class _DispatchDb:
+    def __init__(self, run: AutomationRun, playbook: AutomationPlaybook):
+        self._run = run
+        self._playbook = playbook
+        self.added = []
+
+    async def execute(self, _stmt):  # noqa: ANN001
+        return _ScalarResult(self._run)
+
+    async def get(self, _model, _id):  # noqa: ANN001
+        return self._playbook
+
+    def add(self, obj) -> None:  # noqa: ANN001
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        return None
+
+
 def _principal() -> Principal:
     return Principal(
         api_key_id="key-1",
@@ -54,6 +77,21 @@ def _principal() -> Principal:
         scopes=frozenset({"write"}),
         rate_limit_per_hour=1000,
     )
+
+
+def _dispatch_client(db: _DispatchDb) -> TestClient:
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+
+    async def _db_override():  # noqa: ANN202
+        yield db
+
+    async def _principal_override() -> Principal:
+        return _principal()
+
+    app.dependency_overrides[get_db] = _db_override
+    app.dependency_overrides[get_principal] = _principal_override
+    return TestClient(app)
 
 
 def test_p0_actions_are_limited_to_deliverable_connectors() -> None:
@@ -141,3 +179,70 @@ async def test_required_approvals_is_one_for_supported_p0_run() -> None:
         principal=_principal(),
     )
     assert out.required_approvals == 1
+
+
+def test_dispatch_route_rejects_persisted_step_missing_action(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.api.v1.orchestration._configured_actions",
+        lambda: pytest.fail("connector preflight must not run for malformed steps"),
+    )
+    run = AutomationRun(
+        id="run-1",
+        tenant_id="tenant-1",
+        playbook_id="playbook-1",
+        source_type="manual",
+        source_id="src-1",
+        idempotency_key="idem-1",
+        state="approved",
+        required_approvals=1,
+        approvals=[{"actor": "api_key:key-1", "approved_at": datetime.now(UTC).isoformat()}],
+        context={"hello": "world"},
+        requested_by="api_key:key-1",
+    )
+    playbook = AutomationPlaybook(
+        id="playbook-1",
+        tenant_id="tenant-1",
+        name="Malformed",
+        trigger_type="manual",
+        steps=[{"target": "secops", "payload": {}}],
+    )
+    db = _DispatchDb(run, playbook)
+    client = _dispatch_client(db)
+
+    response = client.post("/api/v1/automation-runs/run-1/dispatch")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Playbook contains invalid stored steps."
+    assert db.added == []
+
+
+def test_dispatch_route_rejects_persisted_step_missing_target(monkeypatch) -> None:
+    monkeypatch.setattr("app.api.v1.orchestration._configured_actions", _allowed_actions)
+    run = AutomationRun(
+        id="run-1",
+        tenant_id="tenant-1",
+        playbook_id="playbook-1",
+        source_type="manual",
+        source_id="src-1",
+        idempotency_key="idem-1",
+        state="approved",
+        required_approvals=1,
+        approvals=[{"actor": "api_key:key-1", "approved_at": datetime.now(UTC).isoformat()}],
+        context={"hello": "world"},
+        requested_by="api_key:key-1",
+    )
+    playbook = AutomationPlaybook(
+        id="playbook-1",
+        tenant_id="tenant-1",
+        name="Malformed",
+        trigger_type="manual",
+        steps=[{"action": "slack.notify", "payload": {}}],
+    )
+    db = _DispatchDb(run, playbook)
+    client = _dispatch_client(db)
+
+    response = client.post("/api/v1/automation-runs/run-1/dispatch")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Playbook contains invalid stored steps."
+    assert db.added == []

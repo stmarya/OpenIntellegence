@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func, select
 
 from app.api.schemas import ListResponse, Page
@@ -109,6 +109,23 @@ class OutboxOut(ORM):
 
 def _actor(principal: Principal) -> str:
     return f"api_key:{principal.api_key_id}"
+
+
+def _validated_stored_steps(steps: list[dict]) -> list[PlaybookStep]:
+    validated: list[PlaybookStep] = []
+    for raw_step in steps:
+        try:
+            step = PlaybookStep.model_validate(raw_step)
+        except ValidationError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Playbook contains invalid stored steps."
+            ) from exc
+        if not step.action or step.action not in _allowed_actions():
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Playbook contains invalid stored steps."
+            )
+        validated.append(step)
+    return validated
 
 
 @router.get("/playbooks", response_model=ListResponse[PlaybookOut])
@@ -316,8 +333,9 @@ async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) ->
     playbook = await db.get(AutomationPlaybook, run.playbook_id)
     if playbook is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Playbook is unavailable.")
+    validated_steps = _validated_stored_steps(playbook.steps)
     configured = _configured_actions()
-    unavailable = _unconfigured_actions(playbook.steps, configured)
+    unavailable = _unconfigured_actions([step.model_dump() for step in validated_steps], configured)
     if unavailable:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -325,14 +343,14 @@ async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) ->
         )
 
     items = []
-    for index, step in enumerate(playbook.steps):
+    for index, step in enumerate(validated_steps):
         item = AutomationOutbox(
             tenant_id=run.tenant_id,
             run_id=run.id,
             step_index=index,
-            action=step["action"],
-            target=step["target"],
-            payload={"run_context": run.context, "step_payload": step.get("payload", {})},
+            action=step.action,
+            target=step.target,
+            payload={"run_context": run.context, "step_payload": step.payload},
             idempotency_key=f"{run.id}:{index}",
         )
         db.add(item)
