@@ -185,6 +185,67 @@ async def list_audit_log(
     )
 
 
+@router.get("/system-health", summary="Platform component state, probed and declared")
+async def system_health(db: DbSession, principal: ReadPrincipal) -> dict:
+    """Report component state, separating what was probed from what was declared.
+
+    A component that is merely configured is never reported as healthy. The
+    distinction matters because a monitoring gap and a working component look
+    identical to a dashboard that does not draw the line.
+    """
+    settings = get_settings()
+    components: list[dict] = []
+
+    try:
+        await db.scalar(select(1))
+        components.append(
+            {
+                "component": "database",
+                "state": "reachable",
+                "observation": "probed",
+                "detail": "A trivial query completed on the request session.",
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 - the failure itself is the finding
+        components.append(
+            {
+                "component": "database",
+                "state": "unreachable",
+                "observation": "probed",
+                "detail": f"The probe raised {type(exc).__name__}.",
+            }
+        )
+
+    for name, attribute in (
+        ("redis", "redis_url"),
+        ("llm_provider", "llm_api_key"),
+        ("embedding_provider", "embedding_model"),
+    ):
+        configured = bool(getattr(settings, attribute, None))
+        components.append(
+            {
+                "component": name,
+                "state": "configured" if configured else "not_configured",
+                "observation": "declared",
+                "detail": (
+                    "Read from configuration only. No connection was attempted, so "
+                    "this does not assert the component is reachable."
+                ),
+            }
+        )
+
+    return {
+        "tenant_id": principal.tenant_id,
+        "components": components,
+        "note": (
+            "Only components marked probed were contacted during this request. "
+            "Ingestion connector state is reported separately on the connector "
+            "surface and is not repeated here."
+        ),
+        "generated_at": datetime.now(UTC),
+    }
+
+
 @router.get("/settings")
 async def get_policy_settings(principal: ReadPrincipal) -> dict:
     """Expose the policy constants that govern this workspace.

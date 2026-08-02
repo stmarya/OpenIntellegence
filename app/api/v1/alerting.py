@@ -31,6 +31,18 @@ class SightingCreate(BaseModel):
     entity_type: str = Field(min_length=2,max_length=64); entity_id: str = Field(min_length=1,max_length=255); asset_id: str | None = Field(default=None,max_length=255); source: str = Field(min_length=2,max_length=64); observed_at: datetime; confidence: int | None = Field(default=None,ge=0,le=100); context: dict = Field(default_factory=dict)
 class SightingOut(ORM):
     id: str; entity_type: str; entity_id: str; asset_id: str | None = None; source: str; observed_at: datetime; confidence: int | None = None; context: dict
+
+
+class AlertDetail(BaseModel):
+    """One alert with the rule that raised it and the matching sightings."""
+
+    alert: AlertOut
+    rule: AlertRuleOut | None = None
+    sightings: list[SightingOut]
+    rule_basis: str
+    sighting_match_basis: str
+
+
 @router.get("/alert-rules",response_model=ListResponse[AlertRuleOut])
 async def list_rules(db: DbSession,principal: ReadPrincipal,limit: Annotated[int,Query(ge=1,le=200)]=50,offset: Annotated[int,Query(ge=0)]=0)->ListResponse[AlertRuleOut]:
     stmt=select(AlertRule).where(AlertRule.tenant_id==principal.tenant_id); total=await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0; rows=(await db.execute(stmt.order_by(AlertRule.created_at.desc()).limit(limit).offset(offset))).scalars().all(); return ListResponse(data=[AlertRuleOut.model_validate(x) for x in rows],page=Page(limit=limit,offset=offset,total=total,has_more=offset+limit<total),provenance=await build_provenance(db,sources=None))
@@ -54,6 +66,78 @@ async def create_alert(payload: AlertCreate,db: DbSession,principal: WritePrinci
         return AlertOut.model_validate(item)
     except IntegrityError:
         existing=(await db.execute(select(Alert).where(Alert.tenant_id==principal.tenant_id,Alert.fingerprint==fingerprint).with_for_update())).scalar_one(); existing.occurrences+=1; existing.last_triggered_at=now; existing.payload=payload.payload; await db.flush(); return AlertOut.model_validate(existing)
+
+
+@router.get("/alerts/{alert_id}", response_model=AlertDetail, summary="Alert detail")
+async def get_alert(alert_id: str, db: DbSession, principal: ReadPrincipal) -> AlertDetail:
+    """Return one alert with the rule that raised it and related sightings.
+
+    Sightings are matched on the alert's entity reference. When an alert
+    carries no entity, no sighting list is claimed at all rather than
+    showing an unrelated selection that would read as corroboration.
+    """
+    alert = (
+        await db.execute(
+            select(Alert).where(Alert.id == alert_id, Alert.tenant_id == principal.tenant_id)
+        )
+    ).scalar_one_or_none()
+    if alert is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Alert not found.")
+
+    rule = None
+    if alert.rule_id:
+        rule = (
+            await db.execute(
+                select(AlertRule).where(
+                    AlertRule.id == alert.rule_id,
+                    AlertRule.tenant_id == principal.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+    rule_basis = (
+        "This alert records a rule id whose rule is no longer present, so the "
+        "triggering condition cannot be shown."
+        if alert.rule_id and rule is None
+        else "This alert was raised without a rule reference."
+        if not alert.rule_id
+        else "The rule shown is the current definition, which may have been "
+        "edited since this alert fired."
+    )
+
+    sightings: list[Sighting] = []
+    if alert.entity_id:
+        stmt = select(Sighting).where(
+            Sighting.tenant_id == principal.tenant_id,
+            Sighting.entity_id == alert.entity_id,
+        )
+        if alert.entity_type:
+            stmt = stmt.where(Sighting.entity_type == alert.entity_type)
+        sightings = list(
+            (
+                await db.execute(stmt.order_by(Sighting.observed_at.desc()).limit(100))
+            ).scalars().all()
+        )
+        sighting_basis = (
+            "Sightings are matched on this alert's entity reference within the "
+            "tenant. An empty list means none was reported, not that the entity "
+            "was never present."
+        )
+    else:
+        sighting_basis = (
+            "This alert carries no entity reference, so no sighting can be tied "
+            "to it without guessing."
+        )
+
+    return AlertDetail(
+        alert=AlertOut.model_validate(alert),
+        rule=AlertRuleOut.model_validate(rule) if rule is not None else None,
+        sightings=[SightingOut.model_validate(s) for s in sightings],
+        rule_basis=rule_basis,
+        sighting_match_basis=sighting_basis,
+    )
+
+
 @router.post("/alerts/{alert_id}/acknowledge",response_model=AlertOut)
 async def acknowledge_alert(alert_id: str,db: DbSession,principal: WritePrincipal)->AlertOut:
     item=(await db.execute(select(Alert).where(Alert.id==alert_id,Alert.tenant_id==principal.tenant_id))).scalar_one_or_none()
