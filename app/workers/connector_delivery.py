@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.db.base import get_session_factory
 from app.db.orchestration_models import AutomationOutbox
+from app.services.automation_capabilities import CONNECTOR_ACTIONS
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,21 @@ class DeliveryWorker:
     def __init__(self, settings: Settings) -> None:
         self.settings, self.connectors = settings, registry(settings)
 
+    def owned_actions(self) -> list[str]:
+        """Only configured connector actions belong to this worker.
+
+        Internal actions (case.create, report.generate) are owned by the
+        internal automation worker, and endpoint command intents are never
+        delivered here. Claiming them would incorrectly dead-letter work this
+        worker must not process.
+        """
+        return sorted(set(self.connectors) & set(CONNECTOR_ACTIONS))
+
     async def claim(self, session: AsyncSession, limit: int = 20) -> list[AutomationOutbox]:
+        owned = self.owned_actions()
+        if not owned:
+            return []
+
         now, token = datetime.now(UTC), token_urlsafe(24)
         pending = and_(
             AutomationOutbox.state.in_(["queued", "retry"]),
@@ -167,6 +182,7 @@ class DeliveryWorker:
         )
         stmt = (
             select(AutomationOutbox)
+            .where(AutomationOutbox.action.in_(owned))
             .where(or_(pending, abandoned))
             .order_by(AutomationOutbox.created_at)
             .limit(limit)
@@ -181,7 +197,7 @@ class DeliveryWorker:
         return rows
 
     async def deliver(self, session: AsyncSession, item: AutomationOutbox) -> None:
-        connector = self.connectors.get(item.action)
+        connector = self.connectors.get(item.action) if item.action in CONNECTOR_ACTIONS else None
         if connector is None:
             receipt = DeliveryReceipt(
                 False, error=f"No enabled connector for action {item.action}."

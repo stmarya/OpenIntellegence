@@ -10,25 +10,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 
 from app.api.schemas import ListResponse, Page
+from app.core.config import get_settings
 from app.core.deps import DbSession, Principal, Scope, require_scope
 from app.db.orchestration_models import AutomationOutbox, AutomationPlaybook, AutomationRun
+from app.services.automation_capabilities import (
+    ENDPOINT_INTENT_ACTIONS,
+    INTERNAL_ACTIONS,
+    validate_action,
+)
 from app.services.provenance import build_provenance
 
 router = APIRouter()
 ReadPrincipal = Annotated[Principal, Depends(require_scope(Scope.READ))]
 WritePrincipal = Annotated[Principal, Depends(require_scope(Scope.WRITE))]
-_ALLOWED_ACTIONS = {
-    "slack.notify",
-    "jira.issue.create",
-    "siem.push",
-}
-# Actions deferred to later milestones — not yet wired to any worker.
-# Accepting them now would produce undeliverable outbox records.
-_DEFERRED_ACTIONS = {
-    "case.create",
-    "report.generate",
-    "endpoint.command.request",
-}
 
 
 class ORM(BaseModel):
@@ -100,20 +94,45 @@ def _actor(principal: Principal) -> str:
     return f"api_key:{principal.api_key_id}"
 
 
-def _invalid_actions_from_steps(steps: list) -> list[str]:
-    invalid: list[str] = []
+def validate_steps(steps: list) -> None:
+    """Reject unsupported, unconfigured, or control-plane-only step actions.
+
+    Endpoint command intents are never allowed to create ordinary automation
+    work; they must be requested through the approval-only endpoint intent API.
+    """
+    settings = get_settings()
+    unsupported: list[str] = []
+    unconfigured: list[str] = []
+    control_plane: list[str] = []
+
     for step in steps:
         action = step.get("action") if isinstance(step, dict) else None
-        if action not in _ALLOWED_ACTIONS:
-            invalid.append(str(action))
-    return list(dict.fromkeys(invalid))
+        if action in ENDPOINT_INTENT_ACTIONS:
+            control_plane.append(str(action))
+            continue
+        try:
+            validate_action(str(action), settings)
+        except ValueError as exc:
+            if str(exc) == "action_not_configured":
+                unconfigured.append(str(action))
+            else:
+                unsupported.append(str(action))
 
-
-def _raise_for_invalid_actions(invalid_actions: list[str]) -> None:
-    if invalid_actions:
+    if control_plane:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Unsupported action(s): {', '.join(invalid_actions)}",
+            "Endpoint command intents are control-plane only and cannot be automated: "
+            + ", ".join(dict.fromkeys(control_plane)),
+        )
+    if unsupported:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Unsupported action(s): {', '.join(dict.fromkeys(unsupported))}",
+        )
+    if unconfigured:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Action(s) not configured for delivery: {', '.join(dict.fromkeys(unconfigured))}",
         )
 
 
@@ -147,7 +166,7 @@ async def create_playbook(
     payload: PlaybookCreate, db: DbSession, principal: WritePrincipal
 ) -> PlaybookOut:
     steps = [x.model_dump() for x in payload.steps]
-    _raise_for_invalid_actions(_invalid_actions_from_steps(steps))
+    validate_steps(steps)
 
     item = AutomationPlaybook(
         tenant_id=principal.tenant_id,
@@ -186,7 +205,7 @@ async def propose_run(payload: RunCreate, db: DbSession, principal: WritePrincip
     ).scalar_one_or_none()
     if playbook is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Enabled playbook not found.")
-    _raise_for_invalid_actions(_invalid_actions_from_steps(playbook.steps))
+    validate_steps(playbook.steps)
 
     required = 1
     run = AutomationRun(
@@ -322,17 +341,22 @@ async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) ->
     playbook = await db.get(AutomationPlaybook, run.playbook_id)
     if playbook is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Playbook is unavailable.")
-    _raise_for_invalid_actions(_invalid_actions_from_steps(playbook.steps))
+    validate_steps(playbook.steps)
 
     items = []
     for index, step in enumerate(playbook.steps):
+        action = step["action"]
         item = AutomationOutbox(
             tenant_id=run.tenant_id,
             run_id=run.id,
             step_index=index,
-            action=step["action"],
+            action=action,
             target=step["target"],
-            payload={"run_context": run.context, "step_payload": step.get("payload", {})},
+            payload={
+                "run_context": run.context,
+                "step_payload": step.get("payload", {}),
+                "delivery_mode": "internal" if action in INTERNAL_ACTIONS else "connector",
+            },
             idempotency_key=f"{run.id}:{index}",
         )
         db.add(item)
