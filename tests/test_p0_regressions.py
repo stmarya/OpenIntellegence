@@ -250,6 +250,151 @@ def test_p0_allowed_actions_covers_connector_actions() -> None:
     assert not missing, f"Connector actions unexpectedly removed from _ALLOWED_ACTIONS: {missing}"
 
 
+class _ScalarResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+@pytest.mark.asyncio
+async def test_propose_run_rejects_stale_playbook_actions_before_run_creation() -> None:
+    """Persisted/admin-inserted playbooks containing deferred actions must be
+    rejected at propose_run before any AutomationRun is created."""
+    from fastapi import HTTPException
+
+    from app.api.v1.orchestration import RunCreate, propose_run
+    from app.core.deps import Principal
+    from app.db.orchestration_models import AutomationPlaybook
+
+    class _Db:
+        def __init__(self) -> None:
+            self.add_calls = 0
+            self.flush_calls = 0
+
+        async def execute(self, _stmt):  # noqa: ANN001
+            if not hasattr(self, "_calls"):
+                self._calls = 0
+            self._calls += 1
+            if self._calls == 1:
+                return _ScalarResult(None)
+            return _ScalarResult(
+                AutomationPlaybook(
+                    id="playbook-1",
+                    tenant_id="tenant-1",
+                    name="stale",
+                    trigger_type="manual",
+                    steps=[{"action": "case.create", "target": "t", "payload": {}}],
+                    enabled=True,
+                )
+            )
+
+        def add(self, _obj):  # noqa: ANN001
+            self.add_calls += 1
+
+        async def flush(self):
+            self.flush_calls += 1
+
+        async def refresh(self, _obj): ...  # noqa: ANN001
+
+    principal = Principal(
+        api_key_id="key-1",
+        tenant_id="tenant-1",
+        name="tester",
+        scopes=frozenset({"admin"}),
+        rate_limit_per_hour=1000,
+    )
+    db = _Db()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await propose_run(
+            RunCreate(
+                playbook_id="playbook-1",
+                source_type="manual",
+                source_id="source-1",
+                idempotency_key="idempotency-1",
+            ),
+            db=db,  # type: ignore[arg-type]
+            principal=principal,
+        )
+    assert exc_info.value.status_code == 422
+    assert "case.create" in str(exc_info.value.detail)
+    assert db.add_calls == 0
+    assert db.flush_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_run_rejects_stale_playbook_actions_before_outbox_creation() -> None:
+    """Persisted/admin-inserted playbooks containing deferred actions must be
+    rejected at dispatch_run before any AutomationOutbox is created."""
+    from fastapi import HTTPException
+
+    from app.api.v1.orchestration import dispatch_run
+    from app.core.deps import Principal
+    from app.db.orchestration_models import AutomationPlaybook, AutomationRun
+
+    run = AutomationRun(
+        id="run-1",
+        tenant_id="tenant-1",
+        playbook_id="playbook-1",
+        source_type="manual",
+        source_id="source-1",
+        idempotency_key="idempotency-1",
+        state="approved",
+        required_approvals=1,
+        approvals=[],
+        context={},
+        requested_by="api_key:key-1",
+    )
+    playbook = AutomationPlaybook(
+        id="playbook-1",
+        tenant_id="tenant-1",
+        name="stale",
+        trigger_type="manual",
+        steps=[{"action": "report.generate", "target": "t", "payload": {}}],
+        enabled=True,
+    )
+
+    class _Db:
+        def __init__(self) -> None:
+            self.add_calls = 0
+            self.flush_calls = 0
+
+        async def execute(self, _stmt):  # noqa: ANN001
+            return _ScalarResult(run)
+
+        async def get(self, model, _id):  # noqa: ANN001
+            if model is AutomationPlaybook:
+                return playbook
+            return None
+
+        def add(self, _obj):  # noqa: ANN001
+            self.add_calls += 1
+
+        async def flush(self):
+            self.flush_calls += 1
+
+        async def refresh(self, _obj): ...  # noqa: ANN001
+
+    principal = Principal(
+        api_key_id="key-1",
+        tenant_id="tenant-1",
+        name="tester",
+        scopes=frozenset({"admin"}),
+        rate_limit_per_hour=1000,
+    )
+    db = _Db()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dispatch_run("run-1", db=db, principal=principal)  # type: ignore[arg-type]
+    assert exc_info.value.status_code == 422
+    assert "report.generate" in str(exc_info.value.detail)
+    assert db.add_calls == 0
+    assert db.flush_calls == 0
+    assert run.state == "approved"
+
+
 @pytest.mark.asyncio
 async def test_create_playbook_rejects_unsupported_actions() -> None:
     """POST /playbooks with a step using a deferred action must raise 422."""
@@ -318,4 +463,3 @@ def test_constraint_names_match_0001_migration() -> None:
             f"'{expected_name}'. Found: {constraint_names}. "
             "This drift will cause Alembic autogenerate to emit spurious migrations."
         )
-

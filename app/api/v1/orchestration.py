@@ -100,6 +100,23 @@ def _actor(principal: Principal) -> str:
     return f"api_key:{principal.api_key_id}"
 
 
+def _invalid_actions_from_steps(steps: list) -> list[str]:
+    invalid: list[str] = []
+    for step in steps:
+        action = step.get("action") if isinstance(step, dict) else None
+        if action not in _ALLOWED_ACTIONS:
+            invalid.append(str(action))
+    return list(dict.fromkeys(invalid))
+
+
+def _raise_for_invalid_actions(invalid_actions: list[str]) -> None:
+    if invalid_actions:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Unsupported action(s): {', '.join(invalid_actions)}",
+        )
+
+
 @router.get("/playbooks", response_model=ListResponse[PlaybookOut])
 async def list_playbooks(
     db: DbSession,
@@ -129,19 +146,15 @@ async def list_playbooks(
 async def create_playbook(
     payload: PlaybookCreate, db: DbSession, principal: WritePrincipal
 ) -> PlaybookOut:
-    invalid = [step.action for step in payload.steps if step.action not in _ALLOWED_ACTIONS]
-    if invalid:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Unsupported action(s): {', '.join(invalid)}",
-        )
+    steps = [x.model_dump() for x in payload.steps]
+    _raise_for_invalid_actions(_invalid_actions_from_steps(steps))
 
     item = AutomationPlaybook(
         tenant_id=principal.tenant_id,
         name=payload.name,
         description=payload.description,
         trigger_type=payload.trigger_type,
-        steps=[x.model_dump() for x in payload.steps],
+        steps=steps,
     )
     db.add(item)
     await db.flush()
@@ -173,6 +186,7 @@ async def propose_run(payload: RunCreate, db: DbSession, principal: WritePrincip
     ).scalar_one_or_none()
     if playbook is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Enabled playbook not found.")
+    _raise_for_invalid_actions(_invalid_actions_from_steps(playbook.steps))
 
     required = 1
     run = AutomationRun(
@@ -308,6 +322,7 @@ async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) ->
     playbook = await db.get(AutomationPlaybook, run.playbook_id)
     if playbook is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Playbook is unavailable.")
+    _raise_for_invalid_actions(_invalid_actions_from_steps(playbook.steps))
 
     items = []
     for index, step in enumerate(playbook.steps):

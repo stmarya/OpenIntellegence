@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.db.base import Base
+from app.db.registry import Base
 
 
 def _table(name: str):
