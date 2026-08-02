@@ -69,6 +69,56 @@ def test_unconfigured_actions_are_detected_before_dispatch() -> None:
     assert _unconfigured_actions(steps, frozenset({"slack.notify"})) == ["siem.push"]
 
 
+def test_unconfigured_actions_handles_missing_action_key() -> None:
+    """Steps without an 'action' key must not raise KeyError."""
+    steps = [
+        {"target": "secops"},  # no 'action' key
+        {"action": "siem.push", "target": "siem"},
+    ]
+    assert _unconfigured_actions(steps, frozenset()) == ["siem.push"]
+
+
+def test_unconfigured_actions_handles_non_string_action() -> None:
+    """Steps with a non-string action value must be silently skipped."""
+    steps = [
+        {"action": 42, "target": "secops"},
+        {"action": None, "target": "siem"},
+        {"action": "slack.notify", "target": "secops"},
+    ]
+    assert _unconfigured_actions(steps, frozenset()) == ["slack.notify"]
+
+
+def test_unconfigured_actions_handles_empty_string_action() -> None:
+    """Steps with an empty string action must be silently skipped."""
+    steps = [
+        {"action": "", "target": "secops"},
+        {"action": "siem.push", "target": "siem"},
+    ]
+    assert _unconfigured_actions(steps, frozenset()) == ["siem.push"]
+
+
+def test_unconfigured_actions_all_malformed_returns_empty() -> None:
+    """All-malformed steps produce an empty list, not a KeyError or 500."""
+    steps = [
+        {"target": "a"},
+        {"action": None},
+        {"action": ""},
+        {"action": 123},
+    ]
+    assert _unconfigured_actions(steps, frozenset()) == []
+
+
+def test_unconfigured_actions_result_is_deterministically_sorted() -> None:
+    """Result must be sorted so dispatch error messages are stable."""
+    steps = [
+        {"action": "siem.push", "target": "siem"},
+        {"action": "jira.issue.create", "target": "jira"},
+        {"action": "slack.notify", "target": "slack"},
+    ]
+    result = _unconfigured_actions(steps, frozenset())
+    assert result == sorted(result)
+
+
 @pytest.mark.asyncio
 async def test_required_approvals_is_one_for_supported_p0_run() -> None:
     playbook = AutomationPlaybook(

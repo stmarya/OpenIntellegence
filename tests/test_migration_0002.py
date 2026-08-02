@@ -39,6 +39,46 @@ class _FakeOp:
         return _noop
 
 
+def test_has_column_returns_false_in_offline_mode_without_calling_get_bind(monkeypatch) -> None:
+    """_has_column must not call op.get_bind() when as_sql is True (offline mode)."""
+    migration = _migration()
+
+    class _OfflineContext:
+        as_sql = True
+
+    class _OfflineOp:
+        def get_context(self):
+            return _OfflineContext()
+
+        def get_bind(self):
+            raise RuntimeError("get_bind() must not be called in offline mode")
+
+    monkeypatch.setattr(migration, "op", _OfflineOp())
+    assert migration._has_column("installed_software", "first_seen") is False
+    assert migration._has_column("asset_exposures", "match_evidence") is False
+
+
+def test_has_unique_constraint_returns_false_in_offline_mode_without_calling_get_bind(
+    monkeypatch,
+) -> None:
+    """_has_unique_constraint must not call op.get_bind() in offline mode."""
+    migration = _migration()
+
+    class _OfflineContext:
+        as_sql = True
+
+    class _OfflineOp:
+        def get_context(self):
+            return _OfflineContext()
+
+        def get_bind(self):
+            raise RuntimeError("get_bind() must not be called in offline mode")
+
+    monkeypatch.setattr(migration, "op", _OfflineOp())
+    assert migration._has_unique_constraint("installed_software", "uq_software_asset_name_version") is False
+    assert migration._has_unique_constraint("asset_exposures", "uq_exposure_asset_vuln") is False
+
+
 def test_upgrade_skips_columns_and_constraints_already_present(monkeypatch) -> None:
     migration = _migration()
     fake_op = _FakeOp()

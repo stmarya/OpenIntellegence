@@ -33,9 +33,11 @@ def _configured_actions() -> frozenset[str]:
 def _unconfigured_actions(steps: list[dict], configured: frozenset[str]) -> list[str]:
     return sorted(
         {
-            step["action"]
+            action
             for step in steps
-            if isinstance(step, dict) and step.get("action") not in configured
+            if isinstance(step, dict)
+            for action in (step.get("action"),)
+            if isinstance(action, str) and action and action not in configured
         }
     )
 
