@@ -1,10 +1,16 @@
 import { DataTable, type Column } from '@/components/DataTable';
+import { Pagination } from '@/components/Pagination';
 import { EmptyState, FeatureGate } from '@/components/States';
+import type { PageMeta } from '@/lib/pagination';
 import type { FetchOutcome } from '@/lib/server-fetch';
 
 /**
  * Renders a live collection, or explains precisely why it is absent. It never
  * falls back to sample rows, cached values, or zeroes.
+ *
+ * When `basePath` is supplied the table also reports how much of the
+ * collection is on screen. Surfaces that genuinely return a bounded set, such
+ * as a fixed capability list, may omit it.
  */
 export function ResourceTable<T>({
   outcome,
@@ -14,6 +20,8 @@ export function ResourceTable<T>({
   emptyTitle,
   emptyDetail,
   note,
+  page,
+  basePath,
 }: {
   outcome: FetchOutcome<T[]>;
   columns: Column<T>[];
@@ -22,6 +30,8 @@ export function ResourceTable<T>({
   emptyTitle: string;
   emptyDetail: string;
   note?: string | null;
+  page?: PageMeta | null;
+  basePath?: string;
 }) {
   if (outcome.status === 'unavailable') {
     return (
@@ -37,6 +47,7 @@ export function ResourceTable<T>({
     <>
       <DataTable columns={columns} rows={outcome.data} rowKey={rowKey} caption={caption} />
       {note ? <p className="muted">{note}</p> : null}
+      {basePath ? <Pagination basePath={basePath} meta={page ?? null} rowCount={outcome.data.length} /> : null}
     </>
   );
 }
