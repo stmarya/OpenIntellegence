@@ -2,7 +2,7 @@
 
 import { api, fromListResponse, USE_MOCK } from "@/lib/api";
 import type { Alert, RemoteState } from "@/lib/api/types";
-import { MockBadge, PageHeader, ProvenanceBanner, RemoteView, SeverityBadge } from "@/components/ui";
+import { MockBadge, PageHeader, RemoteView, SeverityBadge } from "@/components/ui";
 import { useEffect, useState } from "react";
 
 const STATUS_COLOUR: Record<string, string> = {
@@ -28,8 +28,6 @@ export default function AlertsPage() {
       <PageHeader title="Alerts" subtitle="Triggered alert rules and triage queue">
         {USE_MOCK && <MockBadge />}
       </PageHeader>
-
-      {state.status === "partial" && <ProvenanceBanner prov={state.provenance} />}
 
       <RemoteView
         state={state}

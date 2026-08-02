@@ -6,7 +6,6 @@ import {
   CvssScore,
   MockBadge,
   PageHeader,
-  ProvenanceBanner,
   RemoteView,
   SeverityBadge,
 } from "@/components/ui";
@@ -98,9 +97,8 @@ export default function ExplorerPage() {
         }
         skeletonCols={6}
         emptyMessage="No vulnerabilities match the current filters."
-        renderData={(data, prov) => (
+        renderData={(data) => (
           <>
-            {prov && <ProvenanceBanner prov={prov} />}
             <table
               style={{
                 width: "100%",
