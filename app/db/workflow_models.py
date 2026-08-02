@@ -58,6 +58,10 @@ class Case(Base, TimestampMixin):
     sla_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closure_reason: Mapped[str | None] = mapped_column(Text)
+    # Set by the internal worker to enable idempotent retry; unique per case.
+    source_outbox_id: Mapped[str | None] = mapped_column(
+        String(320), unique=True, index=True, nullable=True
+    )
 
 
 class CaseTask(Base, TimestampMixin):

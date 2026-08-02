@@ -89,9 +89,11 @@ class RunStatus(enum.StrEnum):
 
 
 class ReportStatus(enum.StrEnum):
+    PENDING = "pending"
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
+    GENERATED = "generated"
     FAILED = "failed"
 
 
@@ -546,6 +548,10 @@ class Report(Base, TimestampMixin):
     generation_seconds: Mapped[float | None] = mapped_column(Float)
     error_message: Mapped[str | None] = mapped_column(Text)
     requested_by: Mapped[str | None] = mapped_column(String(128))
+    # Set by the internal worker to enable idempotent retry; unique per report.
+    source_outbox_id: Mapped[str | None] = mapped_column(
+        String(320), unique=True, index=True, nullable=True
+    )
 
 
 class DocumentChunk(Base, TimestampMixin):
