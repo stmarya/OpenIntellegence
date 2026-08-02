@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
@@ -24,7 +25,9 @@ const columns: Column<AgentRow>[] = [
     header: 'Agent',
     render: (row) => (
       <>
-        <strong>{row.id}</strong>
+        <strong>
+          <Link href={`/agents/${row.id}`}>{row.id}</Link>
+        </strong>
         <br />
         <small>
           {unknown(row.os_family)} · agent {unknown(row.version)}

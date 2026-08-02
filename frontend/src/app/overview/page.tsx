@@ -1,88 +1,105 @@
-import { DataTable, type Column } from '@/components/DataTable';
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import type { Column } from '@/components/DataTable';
+import { MetricCards, type Metric } from '@/components/MetricCards';
+import { ResourceTable } from '@/components/ResourceTable';
 import { RiskBadge } from '@/components/RiskBadge';
-import { DemoDataBanner } from '@/components/States';
-import { intelligenceRepository } from '@/data/repositories/intelligence-repository';
+import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
+import { totalOf } from '@/lib/totals';
 
-type VulnerabilityRow = ReturnType<typeof intelligenceRepository.listVulnerabilities>[number];
+export const dynamic = 'force-dynamic';
+export const metadata: Metadata = { title: 'Command center' };
 
-export default function OverviewPage() {
-  const vulnerabilities = intelligenceRepository.listVulnerabilities();
-  const research = intelligenceRepository.listResearchReferences();
+type VulnerabilityRow = {
+  cve_id?: string | null;
+  id?: string | null;
+  title?: string | null;
+  cvss_score?: number | null;
+  known_exploited?: boolean | null;
+  published_at?: string | null;
+};
 
-  const columns: Column<VulnerabilityRow>[] = [
-    {
-      key: 'record',
-      header: 'Record',
-      render: (row) => (
+type AlertRow = { id: string };
+type AssetRow = { id: string };
+type CaseRow = { id: string };
+
+const columns: Column<VulnerabilityRow>[] = [
+  {
+    key: 'record',
+    header: 'Record',
+    render: (row) => {
+      const cve = row.cve_id ?? row.id;
+      return (
         <>
-          <strong>{row.id}</strong>
+          <strong>{cve ? <Link href={`/vulnerabilities/${cve}`}>{cve}</Link> : 'Unknown'}</strong>
           <br />
-          <small>{row.title}</small>
+          <small>{row.title ?? 'No title supplied by the source.'}</small>
         </>
-      ),
+      );
+    },
+  },
+  {
+    key: 'risk',
+    header: 'Risk',
+    render: (row) => <RiskBadge score={row.cvss_score ?? null} knownExploited={row.known_exploited === true} />,
+  },
+  { key: 'cvss', header: 'CVSS', render: (row) => <>{row.cvss_score ?? 'Unknown'}</> },
+  { key: 'published', header: 'Published', render: (row) => <small>{unknown(row.published_at)}</small> },
+];
+
+export default async function OverviewPage() {
+  const [vulnerabilities, alerts, assets, cases] = await Promise.all([
+    fetchList<VulnerabilityRow>('/vulnerabilities?limit=25'),
+    fetchList<AlertRow>('/alerts?limit=1'),
+    fetchList<AssetRow>('/assets?limit=1'),
+    fetchList<CaseRow>('/cases?limit=1'),
+  ]);
+
+  const metrics: Metric[] = [
+    {
+      id: 'vulnerabilities',
+      label: 'Vulnerabilities tracked',
+      value: totalOf(vulnerabilities),
+      basis: 'Reported total from the vulnerabilities endpoint.',
     },
     {
-      key: 'risk',
-      header: 'Risk',
-      render: (row) => <RiskBadge score={row.cvssScore} knownExploited={row.knownExploited} />,
+      id: 'alerts',
+      label: 'Alerts raised',
+      value: totalOf(alerts),
+      basis: 'Reported total from the alerts endpoint.',
     },
     {
-      key: 'cvss',
-      header: 'CVSS',
-      render: (row) => <>{row.cvssScore ?? 'Unknown'}</>,
+      id: 'assets',
+      label: 'Assets in inventory',
+      value: totalOf(assets),
+      basis: 'Reported total from the asset inventory.',
     },
     {
-      key: 'provenance',
-      header: 'Source / freshness',
-      render: (row) => (
-        <>
-          {row.provenance.sourceFile}
-          <br />
-          <small>{row.provenance.snapshotLabel}</small>
-        </>
-      ),
+      id: 'cases',
+      label: 'Cases on record',
+      value: totalOf(cases),
+      basis: 'Reported total from the case management endpoint.',
     },
   ];
 
   return (
     <section className="content">
-      <DemoDataBanner label="Bundled source snapshot." />
-      <h1>Threat intelligence overview</h1>
-      <div className="metrics">
-        <article>
-          <b>{vulnerabilities.length}</b>
-          <span>Source-backed vulnerabilities</span>
-        </article>
-        <article>
-          <b>{vulnerabilities.filter((item) => item.knownExploited).length}</b>
-          <span>Known exploited</span>
-        </article>
-        <article>
-          <b>{research.length}</b>
-          <span>Unverified research references</span>
-        </article>
-      </div>
+      <h1>Command center</h1>
+      <p className="muted">
+        Each counter is the total the API itself reports. A counter that could not be read says Unavailable, because an
+        unobserved environment is not a quiet one.
+      </p>
+      <MetricCards metrics={metrics} />
 
       <h2>Vulnerability triage</h2>
-      <DataTable
+      <ResourceTable
+        outcome={rowsOf(vulnerabilities)}
         columns={columns}
-        rows={vulnerabilities}
-        rowKey={(row) => row.id}
-        caption="Unknown CVSS is displayed as Unknown and is never treated as clean."
+        rowKey={(row) => String(row.cve_id ?? row.id)}
+        emptyTitle="No vulnerabilities recorded"
+        emptyDetail="The API responded successfully and no vulnerability record exists for this tenant."
+        caption="Unknown CVSS stays Unknown and is never treated as low risk. Absence from KEV means unproven exploitation, not safety."
       />
-
-      <h2>Research references</h2>
-      <p className="muted">
-        These records are unverified research references and provide no payload, execution, or delivery control.
-      </p>
-      {research.map((item) => (
-        <article className="reference" key={item.id}>
-          <strong>{item.repository}</strong>
-          <span>Unverified research reference</span>
-          <p>{item.description}</p>
-          <small>{item.provenance.snapshotLabel}</small>
-        </article>
-      ))}
     </section>
   );
 }
