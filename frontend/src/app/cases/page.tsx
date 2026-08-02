@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
@@ -24,7 +25,9 @@ const columns: Column<CaseRow>[] = [
     header: 'Case',
     render: (row) => (
       <>
-        <strong>{unknown(row.title)}</strong>
+        <strong>
+          <Link href={`/cases/${row.id}`}>{unknown(row.title)}</Link>
+        </strong>
         <br />
         <small>{unknown(row.case_type)}</small>
       </>
