@@ -1,10 +1,13 @@
 import type { Metadata } from 'next';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
+import { pageMetaOf, withPageQuery } from '@/lib/pagination';
 import { fetchList, rowsOf, type FetchOutcome } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'ATT&CK coverage' };
+
+const AGGREGATE_LIMIT = 200;
 
 type TechniqueBearer = { id: string; name?: string | null; attack_techniques?: string[] };
 
@@ -47,10 +50,28 @@ function buildCoverage(campaigns: TechniqueBearer[], malware: TechniqueBearer[])
   );
 }
 
+/**
+ * Describe the population the aggregate was actually computed over.
+ *
+ * An aggregate is only as honest as its denominator. If either source list
+ * was truncated, the counts below understate reality and the page has to say
+ * so rather than presenting a partial tally as coverage.
+ */
+function describeBasis(label: string, total: number | null, fetched: number): string | null {
+  if (total === null) {
+    return `The ${label} endpoint reported no total, so it is unknown whether all ${label} were counted.`;
+  }
+  if (total > fetched) {
+    return `Only ${fetched} of ${total} ${label} were read, so these counts are a lower bound.`;
+  }
+  return null;
+}
+
 export default async function AttackCoveragePage() {
+  const state = { limit: AGGREGATE_LIMIT, offset: 0 };
   const [campaigns, malware] = await Promise.all([
-    fetchList<TechniqueBearer>('/campaigns'),
-    fetchList<TechniqueBearer>('/malware'),
+    fetchList<TechniqueBearer>(withPageQuery('/campaigns', state)),
+    fetchList<TechniqueBearer>(withPageQuery('/malware', state)),
   ]);
   const campaignRows = rowsOf(campaigns);
   const malwareRows = rowsOf(malware);
@@ -61,6 +82,11 @@ export default async function AttackCoveragePage() {
       : malwareRows.status === 'unavailable'
         ? malwareRows
         : { status: 'ok', data: buildCoverage(campaignRows.data, malwareRows.data) };
+
+  const caveats = [
+    describeBasis('campaigns', pageMetaOf(campaigns)?.total ?? null, campaignRows.status === 'ok' ? campaignRows.data.length : 0),
+    describeBasis('malware families', pageMetaOf(malware)?.total ?? null, malwareRows.status === 'ok' ? malwareRows.data.length : 0),
+  ].filter((value): value is string => value !== null);
 
   return (
     <section className="content">
@@ -77,6 +103,17 @@ export default async function AttackCoveragePage() {
         emptyDetail="Both endpoints responded successfully and no ingested record references an ATT&CK technique yet."
         caption="A technique absent from this table is unmapped, which is not the same as uncovered."
       />
+      {caveats.length > 0 ? (
+        <p className="muted">
+          {caveats.join(' ')} A matrix view is not drawn from a partial tally, because a grid of mostly empty cells reads
+          as measured absence rather than missing input.
+        </p>
+      ) : (
+        <p className="muted">
+          Every ingested campaign and malware family was included in this aggregate. Techniques nobody mapped are absent
+          rather than shown as zero.
+        </p>
+      )}
     </section>
   );
 }

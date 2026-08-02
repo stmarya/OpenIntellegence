@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,7 @@ const columns: Column<AssetRow>[] = [
     header: 'Asset',
     render: (row) => (
       <>
-        <Link href={`/assets/${row.id}`}>
+        <Link href={`/assets/${encodeURIComponent(row.id)}`}>
           <strong>{unknown(row.hostname)}</strong>
         </Link>
         <br />
@@ -36,6 +37,7 @@ const columns: Column<AssetRow>[] = [
       </>
     ),
   },
+  { key: 'type', header: 'Type', render: (row) => <>{unknown(row.asset_type)}</> },
   { key: 'criticality', header: 'Criticality', render: (row) => <>{unknown(row.criticality)}</> },
   {
     key: 'exposure',
@@ -49,16 +51,18 @@ const columns: Column<AssetRow>[] = [
         <StatusChip label="Not internet exposed" tone="neutral" />
       ),
   },
+  { key: 'cves', header: 'Open CVE exposure', render: (row) => <>{row.exposed_cve_count ?? 'Unknown'}</> },
   {
-    key: 'cves',
-    header: 'Open CVE exposure',
-    render: (row) => <>{row.exposed_cve_count ?? 'Unknown'}</>,
+    key: 'seen',
+    header: 'Last seen',
+    render: (row) =>
+      row.last_seen_at ? <small>{row.last_seen_at}</small> : <StatusChip label="Never reported" tone="unknown" />,
   },
-  { key: 'seen', header: 'Last seen', render: (row) => <small>{unknown(row.last_seen_at)}</small> },
 ];
 
-export default async function AssetsPage() {
-  const envelope = await fetchList<AssetRow>('/assets');
+export default async function AssetsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<AssetRow>(withPageQuery('/assets', state));
   return (
     <section className="content">
       <h1>Assets</h1>
@@ -70,10 +74,16 @@ export default async function AssetsPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/assets"
         emptyTitle="No assets in this tenant"
         emptyDetail="The API responded successfully and no asset has been registered or enrolled yet."
         caption="Ordering follows open exposure count, because a high score on nothing is not urgent."
       />
+      <p className="muted">
+        An exposure count of unknown means no software was matched for that asset. It is a gap in observation, and
+        treating it as zero exposure would quietly retire the asset from your attention.
+      </p>
     </section>
   );
 }

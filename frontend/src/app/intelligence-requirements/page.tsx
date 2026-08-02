@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,7 @@ type RequirementRow = {
   status?: string | null;
   owner?: string | null;
   covering_sources?: string[];
+  coverage_note?: string | null;
   review_due_at?: string | null;
 };
 
@@ -25,7 +27,7 @@ const columns: Column<RequirementRow>[] = [
     render: (row) => (
       <>
         <strong>
-          {unknown(row.code)} — {unknown(row.title)}
+          {unknown(row.code)} \u2014 {unknown(row.title)}
         </strong>
         <br />
         <small>Owner: {row.owner ?? 'Unassigned'}</small>
@@ -38,7 +40,15 @@ const columns: Column<RequirementRow>[] = [
     header: 'Source coverage',
     render: (row) =>
       row.covering_sources?.length ? (
-        <small>{row.covering_sources.join(', ')}</small>
+        <>
+          <small>{row.covering_sources.join(', ')}</small>
+          {row.coverage_note ? (
+            <>
+              <br />
+              <small>{row.coverage_note}</small>
+            </>
+          ) : null}
+        </>
       ) : (
         <StatusChip label="No source mapped" tone="unknown" />
       ),
@@ -52,8 +62,9 @@ const columns: Column<RequirementRow>[] = [
   { key: 'review', header: 'Review due', render: (row) => <small>{row.review_due_at ?? 'Not scheduled'}</small> },
 ];
 
-export default async function IntelligenceRequirementsPage() {
-  const envelope = await fetchList<RequirementRow>('/intelligence-requirements');
+export default async function IntelligenceRequirementsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<RequirementRow>(withPageQuery('/intelligence-requirements', state));
   return (
     <section className="content">
       <h1>Intelligence requirements</h1>
@@ -65,10 +76,16 @@ export default async function IntelligenceRequirementsPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/intelligence-requirements"
         emptyTitle="No requirements defined"
         emptyDetail="The API responded successfully and no intelligence requirement has been defined for this tenant."
         caption="Ordering follows requirement code so the list reads the same way every time."
       />
+      <p className="muted">
+        A mapped source means someone asserted the source is relevant. It does not confirm the source is currently
+        collecting, which is reported on the connector surface.
+      </p>
     </section>
   );
 }

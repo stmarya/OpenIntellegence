@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
-import type { Column } from '@/components/DataTable';
-import { ResourceTable } from '@/components/ResourceTable';
+import Link from 'next/link';
+import { DataTable, type Column } from '@/components/DataTable';
+import { FeatureGate } from '@/components/States';
 import { fetchJson, mapOutcome, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -27,26 +28,50 @@ const columns: Column<TemplateRow>[] = [
   },
 ];
 
+/**
+ * Advisories do not exist as records yet.
+ *
+ * This page previously listed report templates under an advisory heading,
+ * which invited readers to believe published advisories existed. The templates
+ * are still shown, but as generation inputs, clearly separated from the
+ * advisory records that no endpoint yet serves.
+ */
 export default async function AdvisoriesPage() {
   const outcome = mapOutcome(
     await fetchJson<{ templates?: TemplateRow[] }>('/reports/templates'),
     (payload) => payload.templates ?? []
   );
+  const templates = outcome.status === 'ok' ? outcome.data : [];
+
   return (
     <section className="content">
       <h1>Advisories</h1>
+      <FeatureGate
+        title="No advisory records are served yet"
+        detail="The platform exposes no advisory endpoint. There is no advisory entity, no approval state, and no distribution history to read, so none is displayed."
+      >
+        <small>
+          Nothing on this page is an advisory. Listing report templates as though they were published advisories would
+          suggest stakeholders had already been notified about something.
+        </small>
+      </FeatureGate>
+
+      <h2>Templates an advisory could be generated from</h2>
       <p className="muted">
-        Advisories are produced from the same grounded pipeline as reports. Publication is intentionally gated on an
-        approval step, so nothing here is distributed to stakeholders straight from a model.
+        These are the generation templates exposed by the reporting service. Generated output is drafted from retrieved
+        evidence and stays unpublished until a person approves it. See <Link href="/reports">Reports</Link> for the
+        artefacts that have actually been produced.
       </p>
-      <ResourceTable
-        outcome={outcome}
-        columns={columns}
-        rowKey={(row) => row.key}
-        emptyTitle="No advisory templates"
-        emptyDetail="The API responded successfully and no report template is registered."
-        caption="Approval, versioning, and distribution history land with the publication workflow."
-      />
+      {templates.length > 0 ? (
+        <DataTable
+          columns={columns}
+          rows={templates}
+          rowKey={(row) => row.key}
+          caption="Templates describe what could be generated, not what has been issued."
+        />
+      ) : (
+        <p className="muted">No report template is registered, so nothing could be generated even on request.</p>
+      )}
     </section>
   );
 }

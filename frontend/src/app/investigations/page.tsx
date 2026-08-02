@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,7 @@ const columns: Column<InvestigationRow>[] = [
     render: (row) => (
       <>
         <strong>
-          <Link href={`/investigations/${row.id}`}>{unknown(row.title)}</Link>
+          <Link href={`/investigations/${encodeURIComponent(row.id)}`}>{unknown(row.title)}</Link>
         </strong>
         <br />
         <small>{row.hypothesis ?? 'No hypothesis recorded.'}</small>
@@ -40,16 +41,14 @@ const columns: Column<InvestigationRow>[] = [
       row.status ? <StatusChip label={row.status} tone="neutral" /> : <StatusChip label="Unknown" tone="unknown" />,
   },
   { key: 'priority', header: 'Priority', render: (row) => <>{unknown(row.priority)}</> },
-  {
-    key: 'confidence',
-    header: 'Analyst confidence',
-    render: (row) => <>{row.confidence ?? 'Not stated'}</>,
-  },
+  { key: 'confidence', header: 'Analyst confidence', render: (row) => <>{row.confidence ?? 'Not stated'}</> },
+  { key: 'owner', header: 'Owner', render: (row) => <>{row.owner ?? 'Unassigned'}</> },
   { key: 'opened', header: 'Opened', render: (row) => <small>{unknown(row.opened_at)}</small> },
 ];
 
-export default async function InvestigationsPage() {
-  const envelope = await fetchList<InvestigationRow>('/investigations');
+export default async function InvestigationsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<InvestigationRow>(withPageQuery('/investigations', state));
   return (
     <section className="content">
       <h1>Investigations</h1>
@@ -61,9 +60,15 @@ export default async function InvestigationsPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/investigations"
         emptyTitle="No investigations open"
         emptyDetail="The API responded successfully and no investigation exists for this tenant."
       />
+      <p className="muted">
+        An investigation tests a hypothesis; a case tracks the work and its deadline. The two are kept separate so that
+        closing the work does not silently settle the question.
+      </p>
     </section>
   );
 }

@@ -4,6 +4,8 @@ import { DetailShell } from '@/components/DetailShell';
 import { FieldTable, type Field } from '@/components/FieldTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
+import { TabNav, resolveTab, type TabDefinition } from '@/components/TabNav';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchJson, fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +42,12 @@ type EventRow = {
   created_at?: string | null;
 };
 
+const TABS: TabDefinition[] = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'tasks', label: 'Tasks' },
+  { key: 'events', label: 'Event trail' },
+];
+
 const taskColumns: Column<TaskRow>[] = [
   { key: 'task', header: 'Task', render: (row) => <strong>{unknown(row.title)}</strong> },
   {
@@ -65,12 +73,22 @@ const eventColumns: Column<EventRow>[] = [
   { key: 'at', header: 'Recorded at', render: (row) => <small>{unknown(row.event_at ?? row.created_at)}</small> },
 ];
 
-export default async function CaseDetailPage({ params }: { params: { caseId: string } }) {
+export default async function CaseDetailPage({
+  params,
+  searchParams,
+}: {
+  params: { caseId: string };
+  searchParams?: SearchParams;
+}) {
   const { caseId } = params;
+  const tab = resolveTab(TABS, searchParams?.tab);
+  const basePath = `/cases/${encodeURIComponent(caseId)}`;
+  const state = readPageState(searchParams);
+
   const [detail, tasks, events] = await Promise.all([
     fetchJson<CaseDetail>(`/cases/${caseId}`),
-    fetchList<TaskRow>(`/cases/${caseId}/tasks`),
-    fetchList<EventRow>(`/cases/${caseId}/events`),
+    fetchList<TaskRow>(withPageQuery(`/cases/${caseId}/tasks`, state)),
+    fetchList<EventRow>(withPageQuery(`/cases/${caseId}/events`, state)),
   ]);
 
   const record = detail.status === 'ok' ? detail.data : null;
@@ -95,29 +113,45 @@ export default async function CaseDetailPage({ params }: { params: { caseId: str
       backHref="/cases"
       backLabel="Back to cases"
       title={record?.title ?? `Case ${caseId}`}
-      intro="A case records ownership, deadline, work, and outcome. The event trail below is append-only, so the history of the case cannot be quietly rewritten."
+      intro="A case records ownership, deadline, work, and outcome. The event trail is append-only, so the history of the case cannot be quietly rewritten."
       outcome={detail}
     >
-      <FieldTable fields={fields} caption="Fields the case record actually carries." />
+      <TabNav basePath={basePath} tabs={TABS} active={tab} />
 
-      <h2>Tasks</h2>
-      <ResourceTable
-        outcome={rowsOf(tasks)}
-        columns={taskColumns}
-        rowKey={(row) => row.id}
-        emptyTitle="No tasks on this case"
-        emptyDetail="The API responded successfully and no task has been created for this case."
-      />
+      {tab === 'overview' ? (
+        <>
+          <FieldTable fields={fields} caption="Fields the case record actually carries." />
+          <p className="muted">
+            Advancing status, assigning work, and closing the case are write actions and are not offered here. The
+            console is read-only, and a control that cannot complete would misstate what this session can do.
+          </p>
+        </>
+      ) : null}
 
-      <h2>Event trail</h2>
-      <ResourceTable
-        outcome={rowsOf(events)}
-        columns={eventColumns}
-        rowKey={(row) => row.id}
-        emptyTitle="No events recorded"
-        emptyDetail="The API responded successfully and no event has been recorded against this case."
-        caption="Append-only. Entries are never edited or removed."
-      />
+      {tab === 'tasks' ? (
+        <ResourceTable
+          outcome={rowsOf(tasks)}
+          columns={taskColumns}
+          rowKey={(row) => row.id}
+          page={pageMetaOf(tasks)}
+          basePath={`${basePath}?tab=tasks`}
+          emptyTitle="No tasks on this case"
+          emptyDetail="The API responded successfully and no task has been created for this case."
+        />
+      ) : null}
+
+      {tab === 'events' ? (
+        <ResourceTable
+          outcome={rowsOf(events)}
+          columns={eventColumns}
+          rowKey={(row) => row.id}
+          page={pageMetaOf(events)}
+          basePath={`${basePath}?tab=events`}
+          emptyTitle="No events recorded"
+          emptyDetail="The API responded successfully and no event has been recorded against this case."
+          caption="Append-only. Entries are never edited or removed."
+        />
+      ) : null}
     </DetailShell>
   );
 }

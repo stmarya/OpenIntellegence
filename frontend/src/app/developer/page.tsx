@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -62,10 +63,16 @@ const columns: Column<ApiKeyRow>[] = [
       </small>
     ),
   },
+  {
+    key: 'revocation',
+    header: 'Revocation reason',
+    render: (row) => <small>{row.revoked_reason ?? 'Not revoked'}</small>,
+  },
 ];
 
-export default async function DeveloperPortalPage() {
-  const envelope = await fetchList<ApiKeyRow>('/api-keys');
+export default async function DeveloperPortalPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<ApiKeyRow>(withPageQuery('/api-keys', state));
   return (
     <section className="content">
       <h1>Developer portal and API keys</h1>
@@ -78,10 +85,16 @@ export default async function DeveloperPortalPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/developer"
         emptyTitle="No API keys issued"
         emptyDetail="The API responded successfully and no key has been issued for this tenant."
         caption="Key material never passes through browser state."
       />
+      <p className="moted muted">
+        Issuing and revoking keys are write actions and are not offered here. The console remains read-only, and a
+        control that cannot complete would misrepresent what this session can do.
+      </p>
     </section>
   );
 }

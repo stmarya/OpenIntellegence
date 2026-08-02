@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, noteOf, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -51,8 +52,9 @@ const columns: Column<AuditRow>[] = [
   { key: 'at', header: 'Recorded at', render: (row) => <>{unknown(row.event_at)}</> },
 ];
 
-export default async function AuditLogPage() {
-  const envelope = await fetchList<AuditRow>('/audit-log');
+export default async function AuditLogPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<AuditRow>(withPageQuery('/audit-log', state));
   return (
     <section className="content">
       <h1>Audit log</h1>
@@ -65,6 +67,8 @@ export default async function AuditLogPage() {
         columns={columns}
         rowKey={(row) => row.id}
         note={noteOf(envelope)}
+        page={pageMetaOf(envelope)}
+        basePath="/audit-log"
         emptyTitle="No audit events recorded"
         emptyDetail="The API responded successfully and no auditable event has been recorded for this tenant yet."
         caption="Most recent event first."
