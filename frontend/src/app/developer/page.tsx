@@ -91,7 +91,7 @@ export default async function DeveloperPortalPage({ searchParams }: { searchPara
         emptyDetail="The API responded successfully and no key has been issued for this tenant."
         caption="Key material never passes through browser state."
       />
-      <p className="moted muted">
+      <p className="muted">
         Issuing and revoking keys are write actions and are not offered here. The console remains read-only, and a
         control that cannot complete would misrepresent what this session can do.
       </p>
