@@ -351,7 +351,8 @@ class AlertEvaluationWorker:
         candidates: list[AlertCandidate] = []
         for asset_id, matches in grouped.items():
             newest = max(matches, key=lambda item: item[0].detected_at)
-            max_cvss = max((item[2].cvss_score or 0.0) for item in matches)
+            known_scores = [item[2].cvss_score for item in matches if item[2].cvss_score is not None]
+            max_cvss: float | None = max(known_scores) if known_scores else None
             candidates.append(
                 AlertCandidate(
                     entity_type="asset",
@@ -362,7 +363,7 @@ class AlertEvaluationWorker:
                         f"for asset {newest[1].hostname}."
                     ),
                     severity=rule.severity,
-                    risk_score=min(100, int(max_cvss * 10)),
+                    risk_score=min(100, int(max_cvss * 10)) if max_cvss is not None else None,
                     observed_at=newest[0].detected_at,
                     matched_factors={
                         "trigger_type": "kev_exposure",

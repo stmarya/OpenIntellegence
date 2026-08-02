@@ -245,6 +245,72 @@ async def test_kev_exposure_matcher_candidate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_kev_exposure_unknown_cvss_preserved() -> None:
+    """CVSS None must not be coerced to 0.0; risk_score and highest_cvss must remain None."""
+    worker = AlertEvaluationWorker(_settings())
+    rule = _rule("kev_exposure")
+    exposure = AssetExposure(
+        id="exp-2",
+        asset_id="asset-2",
+        vulnerability_id="vuln-2",
+        matched_via="cpe",
+        match_evidence="match",
+        detected_at=NOW - timedelta(days=1),
+        resolved_at=None,
+        sla_due_at=None,
+    )
+    asset = Asset(
+        id="asset-2",
+        tenant_id="tenant-1",
+        hostname="host-2",
+        asset_type="endpoint",
+        criticality="medium",
+        os_family="linux",
+        os_version="1",
+        os_eol=False,
+        ip_address=None,
+        mac_address=None,
+        exposed_cve_count=1,
+        risk_score=None,
+        tags=[],
+        meta={},
+        last_seen_at=NOW,
+    )
+    vuln_no_cvss = Vulnerability(
+        id="vuln-2",
+        cve_id="CVE-2026-0002",
+        title="v",
+        description="d",
+        cvss_score=None,
+        cvss_vector=None,
+        severity="high",
+        epss_score=None,
+        published_at=None,
+        last_modified_at=None,
+        is_kev=True,
+        kev_added_at=None,
+        kev_due_at=None,
+        vendor=None,
+        product=None,
+        cpe_uris=[],
+        exploit_maturity="unknown",
+        sources=["cisa_kev"],
+        first_seen=NOW,
+        last_seen=NOW,
+    )
+
+    async def _fake_fetch(_session, tenant_id, _condition):
+        assert tenant_id == "tenant-1"
+        return [(exposure, asset, vuln_no_cvss)]
+
+    worker.fetch_kev_exposures = _fake_fetch  # type: ignore[method-assign]
+    matches = await worker.match_kev_exposure(None, rule, NOW)  # type: ignore[arg-type]
+    assert len(matches) == 1
+    assert matches[0].risk_score is None, "unknown CVSS must not produce a risk_score of 0"
+    assert matches[0].matched_factors["highest_cvss"] is None, "highest_cvss must be None when CVSS is unknown"
+
+
+@pytest.mark.asyncio
 async def test_ransomware_relevance_matcher_candidate() -> None:
     worker = AlertEvaluationWorker(_settings())
     rule = _rule("ransomware_relevance")
