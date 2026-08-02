@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
@@ -25,7 +26,9 @@ const columns: Column<AssetRow>[] = [
     header: 'Asset',
     render: (row) => (
       <>
-        <strong>{unknown(row.hostname)}</strong>
+        <Link href={`/assets/${row.id}`}>
+          <strong>{unknown(row.hostname)}</strong>
+        </Link>
         <br />
         <small>
           {unknown(row.os_family)} {row.os_version ?? ''}
