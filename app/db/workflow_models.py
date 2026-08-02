@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -22,7 +22,9 @@ class Investigation(Base, TimestampMixin):
     priority: Mapped[str] = mapped_column(String(16), default="medium", nullable=False, index=True)
     confidence: Mapped[int | None] = mapped_column(Integer)
     owner: Mapped[str | None] = mapped_column(String(255), index=True)
-    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -82,4 +84,6 @@ class CaseEvent(Base, TimestampMixin):
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     actor: Mapped[str | None] = mapped_column(String(255))
-    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    event_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
