@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "datasetKind": "source_snapshot",
+  "displayLabel": "Bundled sample-data snapshot",
+  "source": {
+    "repository": "stmarya/NogoSecV3.1.1",
+    "commit": "c058fa31db917305a42e2205b80d3c21ff4970ed",
+    "directory": "API_Testing/OTX/collected_data"
+  },
+  "curationPolicy": {
+    "recordValues": "verbatim",
+    "selection": "Small, static UI seed subset from source files",
+    "excludedFields": "Only fields omitted for UI scope or safe presentation; no retained value is rewritten",
+    "networkAccess": "No browser-time request to the source repository"
+  },
+  "files": [
+    {
+      "name": "cisa_kev_3months.json",
+      "sha": "a74ca7a4371e570d2799bf6cccfa400cffd812cb",
+      "selectedRecordIds": ["CVE-2025-34291", "CVE-2026-34926", "CVE-2026-31431"],
+      "selectedCount": 3
+    },
+    {
+      "name": "nvd_api_3months.json",
+      "sha": "2e48e487f8a29fb94d322671f7e29e105df471af",
+      "selectedRecordIds": ["CVE-2026-2896", "CVE-2026-2904", "CVE-2026-1369"],
+      "selectedCount": 3
+    },
+    {
+      "name": "github_poc_3months.json",
+      "sha": "11ab03493b87ad1d70bff553239ce7d0bbd53336",
+      "selectedRecordIds": ["kasireddy-sec/cve-intelligence-automation", "gcve-eu/gcve-enriched-dumps", "OWASP/cve-lite-cli"],
+      "selectedCount": 3,
+      "uiClassification": "unverified-research-reference"
+    }
+  ]
+}
