@@ -188,6 +188,12 @@ records and figures rather than failing.
 | `POST` | `/api/v1/ingest/{source}/run` | `admin` |
 | `POST` | `/api/v1/chat/query` | `read` |
 | `POST` | `/api/v1/reports/generate` | `report.write` |
+| `POST` | `/api/v1/endpoint-command-requests` | `write` |
+| `GET` | `/api/v1/endpoint-command-requests` | `read` |
+| `GET` | `/api/v1/endpoint-command-requests/{id}` | `read` |
+| `POST` | `/api/v1/endpoint-command-requests/{id}/approve` | `write` |
+| `POST` | `/api/v1/endpoint-command-requests/{id}/reject` | `write` |
+| `POST` | `/api/v1/endpoint-command-requests/{id}/cancel` | `write` |
 
 The vulnerability list is ordered by **affected asset count** by default, not
 by CVSS. A 9.8 that touches nothing is less urgent than a 7.8 on a hundred
@@ -195,15 +201,95 @@ hosts, and score-first ordering is how remediation queues end up ignored.
 
 ---
 
+## Endpoint command request control plane
+
+The endpoint command request API implements an **approval-gated, audited
+request control plane**.  It does **not** send any command to any endpoint.
+
+### What it does
+
+A caller with `write` scope can *propose* a command request against a target
+asset or agent.  The request begins in `proposed` state and requires **two
+approvals from two distinct API-key identities** (neither of which may be the
+requester) before it reaches `approved` state.  Even a fully-approved request
+is never dispatched — every response carries `"delivery_status": "pending"` and
+an explicit note that no command has been sent.
+
+### Allowed command types (strict allowlist)
+
+Arbitrary shell text and script content are rejected at schema-validation time.
+Only the following identifiers are accepted:
+
+| `command_type` | Intent |
+|---|---|
+| `isolate_network` | Isolate the endpoint from the network fabric |
+| `collect_forensic_artifact` | Retrieve a named forensic artefact |
+| `terminate_process` | Terminate a process by name or PID |
+| `quarantine_file` | Move a file to quarantine storage |
+| `flush_dns_cache` | Flush the local DNS resolver cache |
+| `run_vulnerability_scan` | Trigger a local vulnerability scan |
+
+### State machine
+
+```
+proposed ──(1st approval)──► partially_approved ──(2nd approval)──► approved
+proposed ──(cancel/reject)──► cancelled / rejected
+partially_approved ──(cancel/reject)──► cancelled / rejected
+proposed / partially_approved ──(expiry)──► expired
+```
+
+Delivery (`approved → dispatched`) is **not yet implemented**.  It requires a
+signed mTLS agent-delivery channel that lives in a separate repository.
+
+### Approval gate and its current limitation
+
+Two approval records from two distinct `api_key:<id>` identities are required.
+The requester's own identity is excluded from both slots.
+
+**Important:** API-key identity is not equivalent to human / role separation of
+duties.  A single person who holds two API keys can satisfy both approval slots.
+A production deployment must enforce OIDC/SSO subject identity and RBAC-role
+gates to achieve genuine two-person-integrity.
+
+### Security model
+
+- No connector secrets, no network calls, no shell execution.
+- `parameters` is an opaque JSON payload validated only for structure; the
+  allowlisted `command_type` constrains its semantics.
+- Tenant isolation is enforced at every read and write operation.
+- `audit_timeline` is an append-only JSON array; entries are never removed.
+- `result` and `receipt` are always `null` in this slice (no dispatch).
+- Requests cannot become executable from AI output or any automated path.
+
+---
+
+## Approval-first orchestration
+
+The orchestration layer (`/api/v1/playbooks`, `/api/v1/automation-runs`) gates
+automation on human approval before any action is taken.  A playbook step
+with `action: endpoint.command.request` automatically requires two approvals
+rather than one for its parent run.
+
+---
+
 ## Status
 
 This is the foundation slice: schema, normalisation, connector framework,
-REST API, agent gateway, API-key service and AI layer.
+REST API, agent gateway, API-key service, AI layer, and endpoint command
+request control plane.
 
-Not yet done: the Prefect/Kafka orchestration layer, the TAXII 2.1 server,
-the OpenSearch and Neo4j integrations, and the outbound webhook emitter. The
-Go endpoint agent lives in a separate repository.
+**Feature work pending:**
+- Real mTLS / signed agent delivery for endpoint command dispatch.
+- OIDC/SSO identity enforcement for true two-person-integrity on approvals.
+- Prefect/Kafka orchestration layer.
+- TAXII 2.1 server.
+- OpenSearch and Neo4j integrations.
+- Outbound webhook emitter.
 
-Tests cover normalisation and the security primitives. The connectors and
-HTTP layer are not yet covered by integration tests against recorded
-fixtures.
+The Go endpoint agent lives in a separate repository.
+
+Tests cover normalisation, security primitives, orchestration, and the
+endpoint command request control plane (allowlist, tenant isolation,
+approval-gate, expiry, cancellation, idempotency, and no-execution contracts).
+The connectors and HTTP layer are not yet covered by integration tests against
+recorded fixtures.

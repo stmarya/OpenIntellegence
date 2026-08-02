@@ -34,6 +34,7 @@ EXPECTED_FAMILIES = (
     "/api/v1/correlations",
     "/api/v1/playbooks",
     "/api/v1/automation-runs",
+    "/api/v1/endpoint-command-requests",
 )
 
 

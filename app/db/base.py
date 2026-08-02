@@ -94,6 +94,7 @@ from app.db import (  # noqa: E402,F401
     alert_models,
     correlation_models,
     domain_models,
+    endpoint_command_models,
     models,
     orchestration_models,
     workflow_models,
