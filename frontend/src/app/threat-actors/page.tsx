@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +24,9 @@ const columns: Column<ActorRow>[] = [
     header: 'Actor',
     render: (row) => (
       <>
-        <strong>{unknown(row.name)}</strong>
+        <Link href={`/threat-actors/${encodeURIComponent(row.id)}`}>
+          <strong>{unknown(row.name)}</strong>
+        </Link>
         <br />
         <small>{row.description ?? 'No description supplied by the source.'}</small>
       </>
@@ -33,8 +37,9 @@ const columns: Column<ActorRow>[] = [
   { key: 'last', header: 'Last seen', render: (row) => <>{unknown(row.last_seen)}</> },
 ];
 
-export default async function ThreatActorsPage() {
-  const envelope = await fetchList<ActorRow>('/actors');
+export default async function ThreatActorsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<ActorRow>(withPageQuery('/actors', state));
   return (
     <section className="content">
       <h1>Threat actors</h1>
@@ -46,6 +51,8 @@ export default async function ThreatActorsPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/threat-actors"
         emptyTitle="No actor records"
         emptyDetail="The API responded successfully and no threat actor has been ingested yet."
         caption="Ordering follows observed victim count from the ingested feeds."

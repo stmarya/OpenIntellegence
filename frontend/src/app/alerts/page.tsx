@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import type { Column } from '@/components/DataTable';
 import { ResourceTable } from '@/components/ResourceTable';
 import { StatusChip } from '@/components/StatusChip';
+import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
 import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
@@ -26,7 +28,9 @@ const columns: Column<AlertRow>[] = [
     header: 'Alert',
     render: (row) => (
       <>
-        <strong>{unknown(row.title)}</strong>
+        <Link href={`/alerts/${encodeURIComponent(row.id)}`}>
+          <strong>{unknown(row.title)}</strong>
+        </Link>
         <br />
         <small>{row.summary ?? 'No summary recorded.'}</small>
       </>
@@ -57,7 +61,7 @@ const columns: Column<AlertRow>[] = [
     header: 'Entity',
     render: (row) => (
       <small>
-        {unknown(row.entity_type)} · {unknown(row.entity_id)}
+        {unknown(row.entity_type)} \u00b7 {unknown(row.entity_id)}
       </small>
     ),
   },
@@ -74,8 +78,9 @@ const columns: Column<AlertRow>[] = [
   },
 ];
 
-export default async function AlertsPage() {
-  const envelope = await fetchList<AlertRow>('/alerts');
+export default async function AlertsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const state = readPageState(searchParams);
+  const envelope = await fetchList<AlertRow>(withPageQuery('/alerts', state));
   return (
     <section className="content">
       <h1>Alerts</h1>
@@ -87,6 +92,8 @@ export default async function AlertsPage() {
         outcome={rowsOf(envelope)}
         columns={columns}
         rowKey={(row) => row.id}
+        page={pageMetaOf(envelope)}
+        basePath="/alerts"
         emptyTitle="No alerts raised"
         emptyDetail="The API responded successfully and no alert has fired for this tenant."
         caption="Ordering follows risk score, then most recent trigger."
