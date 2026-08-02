@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -156,12 +156,14 @@ async def list_investigations(
 async def create_investigation(
     payload: InvestigationCreate, db: DbSession, principal: WritePrincipal
 ) -> InvestigationOut:
+    opened_at = datetime.now(UTC)
     item = Investigation(
         tenant_id=principal.tenant_id,
         title=payload.title,
         hypothesis=payload.hypothesis,
         priority=payload.priority,
         owner=payload.owner or f"api_key:{principal.api_key_id}",
+        opened_at=opened_at,
     )
     db.add(item)
     await db.flush()
@@ -358,7 +360,10 @@ async def add_event(
     if exists is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Case not found.")
     event = CaseEvent(
-        case_id=case_id, actor=f"api_key:{principal.api_key_id}", **payload.model_dump()
+        case_id=case_id,
+        actor=f"api_key:{principal.api_key_id}",
+        event_at=datetime.now(UTC),
+        **payload.model_dump(),
     )
     db.add(event)
     await db.flush()

@@ -141,6 +141,7 @@ async def create_playbook(
     )
     db.add(item)
     await db.flush()
+    await db.refresh(item)
     return PlaybookOut.model_validate(item)
 
 
@@ -184,6 +185,7 @@ async def propose_run(payload: RunCreate, db: DbSession, principal: WritePrincip
     )
     db.add(run)
     await db.flush()
+    await db.refresh(run)
     return RunOut.model_validate(run)
 
 
@@ -322,4 +324,6 @@ async def dispatch_run(run_id: str, db: DbSession, principal: WritePrincipal) ->
     run.state = "dispatched"
     run.dispatched_at = datetime.now(UTC)
     await db.flush()
+    for item in items:
+        await db.refresh(item)
     return [OutboxOut.model_validate(x) for x in items]

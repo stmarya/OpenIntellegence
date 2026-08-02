@@ -103,7 +103,7 @@ class SiemWebhookConnector:
     async def deliver(self, item: AutomationOutbox) -> DeliveryReceipt:
         headers = {"Idempotency-Key": item.idempotency_key}
         if self.token:
-            headers["Authorization"] = "******"
+            headers["Authorization"] = "Bearer " + self.token
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
