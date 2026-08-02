@@ -1,23 +1,22 @@
-import { DemoDataBanner, FeatureGate } from '@/components/States';
+import type { Metadata } from 'next';
+import { GroundedChat } from '@/components/GroundedChat';
 
-/**
- * The AI analyst surface is read-only. It can never expose an action trigger,
- * and it must present analysis as unverified when no cited evidence exists.
- */
+export const metadata: Metadata = { title: 'AI analyst' };
+
 export default function AiAnalystPage() {
   return (
     <section className="content">
-      <DemoDataBanner label="AI analysis requires retrieved, cited platform evidence." />
       <h1>AI analyst</h1>
-      <FeatureGate
-        title="Grounded analysis unavailable"
-        detail="No tenant-scoped evidence package is currently available to cite, so no analysis is generated."
-      >
-        <small>
-          Responses must preserve citations, provenance, confidence, and an unverified state when evidence is missing.
-          The analyst cannot autonomously execute or dispatch any action.
-        </small>
-      </FeatureGate>
+      <p className="muted">
+        The analyst answers only from records retrieved out of this workspace. When retrieval returns nothing, the
+        response is withheld instead of being filled in from the model&apos;s general knowledge, which would produce
+        confident claims about data you never ingested.
+      </p>
+      <p className="muted">
+        The analyst cannot execute anything. It has no path to dispatch a playbook, deliver a connector action, or send
+        a command to an endpoint.
+      </p>
+      <GroundedChat />
     </section>
   );
 }
