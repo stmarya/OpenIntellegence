@@ -172,7 +172,7 @@ export default async function ImportWorkbenchPage({ searchParams }: { searchPara
             <ul>
               {reasons.map(([reason, count]) => (
                 <li key={reason}>
-                  {reason} \u2014 {count}
+                  {reason} — {count}
                 </li>
               ))}
             </ul>
