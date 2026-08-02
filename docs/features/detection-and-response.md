@@ -1,6 +1,6 @@
 # Detection and Response
 
-## Status: Production — P0 (core delivery) complete, P1 (reliability controls) complete
+## Status: Implemented in feature branch; pending integration/review/validation — P0 (core delivery) and P1 (reliability controls)
 
 OpenIntelligence ships an approval-first, dual-safeguard automation engine for detection
 and response workflows.
@@ -60,9 +60,11 @@ state in the outbox until their dedicated worker processes them.
 2. **Approve** by required approvers — 1 for most actions; 2 for any playbook
    containing `endpoint.command.request`.
 3. **Dispatch** the approved run (`POST /automation-runs/{id}/dispatch`) — this
-   validates that every delivery-adapter step has an enabled connector.  If any
-   adapter is missing the dispatch is **rejected with HTTP 422** and explains which
-   actions are unavailable.  Internal/planned actions are not subject to this check.
+   validates that every step uses a currently-enabled action.  Delivery-adapter steps
+   require a configured connector; internal/planned actions (e.g., `case.create`) are
+   also rejected until their worker is integrated and the capability entry is updated
+   to `enabled: true`.  Any unavailable action causes the dispatch to be **rejected
+   with HTTP 422** listing the specific actions.
 4. The **DeliveryWorker** claims and delivers each outbox item with lease/retry
    semantics.  Internal actions are never claimed by this worker.
 

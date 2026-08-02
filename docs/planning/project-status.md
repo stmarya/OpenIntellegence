@@ -2,36 +2,41 @@
 
 Last updated: 2026-08-02
 
+> **Note:** All items below reflect the state of unmerged feature branches.
+> Nothing here has been applied to a production or integration environment.
+> Status values indicate implementation progress within the feature branch only.
+> Final validation occurs after integration into the main branch.
+
 ---
 
-## P0 — Backend integration (complete)
+## P0 — Backend integration (implemented in feature branch; pending integration/review/validation)
 
 | Feature | Status |
 |---|---|
-| Approval-first automation orchestration | ✅ Complete |
-| Dual-approval for `endpoint.command.request` | ✅ Complete |
-| Connector outbox with lease/retry semantics | ✅ Complete |
-| Slack, Jira, SIEM webhook delivery adapters | ✅ Complete |
-| Bounded retry with exponential back-off (max 5 attempts) | ✅ Complete |
-| Secret-free configuration (all credentials via `SecretStr`) | ✅ Complete |
-| Idempotency key uniqueness enforcement | ✅ Complete |
+| Approval-first automation orchestration | ✅ Implemented in feature branch |
+| Dual-approval for `endpoint.command.request` | ✅ Implemented in feature branch |
+| Connector outbox with lease/retry semantics | ✅ Implemented in feature branch |
+| Slack, Jira, SIEM webhook delivery adapters | ✅ Implemented in feature branch |
+| Bounded retry with exponential back-off (max 5 attempts) | ✅ Implemented in feature branch |
+| Secret-free configuration (all credentials via `SecretStr`) | ✅ Implemented in feature branch |
+| Idempotency key uniqueness enforcement | ✅ Implemented in feature branch |
 
-## P1 — Orchestration reliability controls (complete)
+## P1 — Orchestration reliability controls (implemented in feature branch; pending integration/review/validation)
 
 | Feature | Status |
 |---|---|
-| Connector capability registry (safe metadata, no secrets) | ✅ Complete |
-| `GET /orchestration/capabilities` — read-scope API | ✅ Complete |
-| `GET /orchestration/health` — tenant-scoped outbox counts | ✅ Complete |
-| Dispatch validation — unavailable adapter rejection | ✅ Complete |
-| Internal action handling — never silently dead-lettered | ✅ Complete |
-| Dead-letter replay (`POST /automation-outbox/{id}/replay`) | ✅ Complete |
-| Replay idempotency (new key per replay, attempt reset) | ✅ Complete |
-| Replay audit trail (`replay_history` column) | ✅ Complete |
-| Tenant isolation for replay and health endpoints | ✅ Complete |
-| Config-based connector health (no network probes) | ✅ Complete |
-| Worker claim filter — internal actions excluded | ✅ Complete |
-| Deterministic reliability tests (no external calls) | ✅ Complete |
+| Connector capability registry (safe metadata, no secrets) | ✅ Implemented in feature branch |
+| `GET /orchestration/capabilities` — read-scope API | ✅ Implemented in feature branch |
+| `GET /orchestration/health` — tenant-scoped outbox counts | ✅ Implemented in feature branch |
+| Dispatch validation — all unavailable action rejection | ✅ Implemented in feature branch |
+| Internal action blocking — dispatch rejects unimplemented workers | ✅ Implemented in feature branch |
+| Dead-letter replay (`POST /automation-outbox/{id}/replay`) | ✅ Implemented in feature branch |
+| Replay idempotency (new key per replay, attempt reset) | ✅ Implemented in feature branch |
+| Replay audit trail (`replay_history` column) | ✅ Implemented in feature branch |
+| Tenant isolation for replay and health endpoints | ✅ Implemented in feature branch |
+| Config-based connector health (no network probes) | ✅ Implemented in feature branch |
+| Worker claim filter — internal actions excluded | ✅ Implemented in feature branch |
+| Deterministic reliability tests (no external calls) | ✅ Implemented in feature branch |
 
 ## Planned
 
@@ -48,16 +53,20 @@ Last updated: 2026-08-02
 
 ## Data migrations
 
+> Migration status reflects the feature branch only.  None of these have been
+> applied to a shared or production database; final numbering and ordering will
+> be confirmed during integration.
+
 | Revision | Description | Status |
 |---|---|---|
-| 0001 | Initial schema | ✅ Applied |
-| 0002 | Campaign and malware domain tables | ✅ Applied |
-| 0003 | Investigations and cases | ✅ Applied |
-| 0004 | Alerts and sightings | ✅ Applied |
-| 0005 | Correlation AI briefs | ✅ Applied |
-| 0006 | Approval-first orchestration | ✅ Applied |
-| 0007 | Connector delivery runtime (lease/retry) | ✅ Applied |
-| 0008 | Replay tracking columns (`replay_count`, `replay_history`) | ✅ Applied |
+| 0001 | Initial schema | ⏳ Pending application — implemented in feature branch |
+| 0002 | Campaign and malware domain tables | ⏳ Pending application — implemented in feature branch |
+| 0003 | Investigations and cases | ⏳ Pending application — implemented in feature branch |
+| 0004 | Alerts and sightings | ⏳ Pending application — implemented in feature branch |
+| 0005 | Correlation AI briefs | ⏳ Pending application — implemented in feature branch |
+| 0006 | Approval-first orchestration | ⏳ Pending application — implemented in feature branch |
+| 0007 | Connector delivery runtime (lease/retry) | ⏳ Pending application — implemented in feature branch |
+| 0008 | Replay tracking columns (`replay_count`, `replay_history`) | ⏳ Pending application — implemented in feature branch; revision number subject to change on integration |
 
 ---
 

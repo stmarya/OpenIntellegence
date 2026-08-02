@@ -162,6 +162,18 @@ def enabled_delivery_actions(settings: Settings) -> frozenset[str]:
     )
 
 
+def all_enabled_actions(settings: Settings) -> frozenset[str]:
+    """Return the set of all actions that are currently enabled.
+
+    This includes delivery-adapter actions with a configured connector.
+    Internal/planned actions are never included until their workers are
+    integrated and the capability entry is updated to ``enabled=True``.
+    """
+    return frozenset(
+        entry.action for entry in build_capability_registry(settings) if entry.enabled
+    )
+
+
 def connector_health(settings: Settings) -> list[dict]:
     """Derive per-connector health from configuration and state.
 

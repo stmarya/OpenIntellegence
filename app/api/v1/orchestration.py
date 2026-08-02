@@ -15,9 +15,9 @@ from app.core.deps import DbSession, Principal, Scope, require_scope
 from app.db.orchestration_models import AutomationOutbox, AutomationPlaybook, AutomationRun
 from app.services.capabilities import (
     ALL_ACTIONS,
+    all_enabled_actions,
     build_capability_registry,
     connector_health,
-    enabled_delivery_actions,
 )
 from app.services.provenance import build_provenance
 
@@ -350,23 +350,24 @@ async def dispatch_run(
     if playbook is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Playbook is unavailable.")
 
-    # Reject dispatch if any delivery-adapter step has no enabled connector.
-    # Internal actions are allowed to proceed; they will be served by future workers.
-    available = enabled_delivery_actions(settings)
-    from app.services.capabilities import DELIVERY_ACTIONS
-
+    # Reject dispatch if any step uses an action that is not currently enabled.
+    # This covers both unconfigured delivery adapters and unimplemented internal
+    # actions (case.create, report.generate, endpoint.command.request are all
+    # enabled=False / config_state="planned" until their workers are integrated).
+    available = all_enabled_actions(settings)
     unavailable = [
         step["action"]
         for step in playbook.steps
-        if step["action"] in DELIVERY_ACTIONS and step["action"] not in available
+        if step["action"] not in available
     ]
     if unavailable:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             {
                 "message": (
-                    "Dispatch rejected: the following action(s) have no enabled delivery "
-                    "adapter. Configure the connector or remove the step before dispatching."
+                    "Dispatch rejected: the following action(s) are not currently available. "
+                    "Configure the required connector or wait for the worker implementation "
+                    "before dispatching."
                 ),
                 "unavailable_actions": sorted(set(unavailable)),
             },

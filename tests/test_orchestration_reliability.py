@@ -23,6 +23,7 @@ from app.services.capabilities import (
     DELIVERY_ACTIONS,
     INTERNAL_ACTIONS,
     CapabilityEntry,
+    all_enabled_actions,
     build_capability_registry,
     connector_health,
     enabled_delivery_actions,
@@ -189,6 +190,40 @@ class TestPlaybookActionValidation:
         available = enabled_delivery_actions(settings)
         for action in INTERNAL_ACTIONS:
             assert action not in available
+
+    def test_all_enabled_actions_excludes_internal(self) -> None:
+        """all_enabled_actions() must never include internal/planned actions.
+
+        This mirrors the dispatch_run pre-flight check: every step whose action
+        is not in all_enabled_actions() is rejected with HTTP 422, so internal
+        actions (case.create, report.generate, endpoint.command.request) cannot
+        be dispatched until a worker integration sets their enabled flag to True.
+        """
+        from pydantic import SecretStr
+
+        # Even with all delivery connectors configured, internal actions are absent.
+        settings = _settings(
+            slack_webhook_url=SecretStr("https://hooks.slack.com/x"),
+            jira_base_url="https://acme.atlassian.net",
+            jira_email="bot@acme.com",
+            jira_api_token=SecretStr("tok"),
+            siem_webhook_url=SecretStr("https://siem/x"),
+        )
+        available = all_enabled_actions(settings)
+        for action in INTERNAL_ACTIONS:
+            assert action not in available, (
+                f"Internal action {action!r} must not be in all_enabled_actions()"
+            )
+
+    def test_all_enabled_actions_includes_configured_delivery(self) -> None:
+        """all_enabled_actions() returns delivery actions when connectors are set."""
+        from pydantic import SecretStr
+
+        settings = _settings(slack_webhook_url=SecretStr("https://hooks.slack.com/x"))
+        available = all_enabled_actions(settings)
+        assert "slack.notify" in available
+        assert "jira.issue.create" not in available
+        assert "siem.push" not in available
 
 
 # ---------------------------------------------------------------------------

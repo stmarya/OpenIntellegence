@@ -1,6 +1,6 @@
 # Observability and Incidents
 
-## Status: P1 operational health endpoints complete
+## Status: Implemented in feature branch; pending integration/review/validation — P1 operational health endpoints
 
 ---
 
