@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from hashlib import sha256
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -14,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.schemas import ListResponse, Page
 from app.core.deps import DbSession, Principal, Scope, require_scope
 from app.db.alert_models import Alert, AlertRule, Sighting
+from app.services.alerting import alert_fingerprint
 from app.services.provenance import build_provenance
 
 router = APIRouter()
@@ -104,20 +104,6 @@ class SightingOut(ORM):
     context: dict
 
 
-def _fingerprint(tenant_id: str, payload: AlertCreate, bucket: datetime) -> str:
-    raw = "|".join(
-        (
-            tenant_id,
-            payload.rule_id or "manual",
-            payload.entity_type or "",
-            payload.entity_id or "",
-            payload.severity,
-            bucket.strftime("%Y%m%d%H"),
-        )
-    )
-    return sha256(raw.encode()).hexdigest()
-
-
 @router.get("/alert-rules", response_model=ListResponse[AlertRuleOut])
 async def list_rules(
     db: DbSession,
@@ -200,7 +186,14 @@ async def create_alert(payload: AlertCreate, db: DbSession, principal: WritePrin
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Enabled alert rule not found.")
 
     now = datetime.now(UTC)
-    fingerprint = _fingerprint(principal.tenant_id, payload, now)
+    fingerprint = alert_fingerprint(
+        principal.tenant_id,
+        rule_id=payload.rule_id,
+        entity_type=payload.entity_type,
+        entity_id=payload.entity_id,
+        severity=payload.severity,
+        bucket=now,
+    )
     item = Alert(
         tenant_id=principal.tenant_id,
         fingerprint=fingerprint,
@@ -224,6 +217,12 @@ async def create_alert(payload: AlertCreate, db: DbSession, principal: WritePrin
         ).scalar_one()
         existing.occurrences += 1
         existing.last_triggered_at = now
+        existing.title = payload.title
+        existing.summary = payload.summary
+        existing.severity = payload.severity
+        existing.entity_type = payload.entity_type
+        existing.entity_id = payload.entity_id
+        existing.risk_score = payload.risk_score
         existing.payload = payload.payload
         await db.flush()
         return AlertOut.model_validate(existing)
