@@ -38,6 +38,35 @@ report that attributes an action to a named human would be inventing one.
 - Capability and health responses expose availability and delivery mode, never secret material. `configured` is never reported as `reachable`.
 - Browser code never receives or constructs a platform API key; the console reads server-side.
 
+### Secret scanning
+
+The rules above govern how credentials are handled at runtime. They say nothing
+about credentials committed to the repository itself, which is a separate
+failure mode and has already occurred on a sibling repository.
+
+`.github/workflows/security.yml` runs gitleaks across **every commit reachable
+from the ref**, not just the working tree. A scan limited to the current
+checkout reports clean while a key remains retrievable from an older commit,
+which is the more dangerous outcome because it comes with a green badge.
+Findings are redacted in the log, since Actions output is itself a publication
+channel and a scanner that prints what it found republishes it.
+
+`.gitleaks.toml` narrows the default ruleset so the scan stays credible against
+a corpus full of hashes and indicator values. The allowlist exists to prevent
+noise, never to silence a true finding. A scan that people learn to ignore is
+worse than no scan.
+
+Full rationale, including what the scan does **not** prove, is in
+[`security-scanning.md`](./security-scanning.md).
+
+### Known outstanding exposure
+
+Credentials for Ransomware.live, AlienVault OTX, and VulnCheck were committed
+in plaintext to the public `NogoSecV3.1.1` repository and are present on its
+default branch head. Scanning, purge tooling, and a runbook are in place there;
+**rotation is not**, and only rotation revokes access. Treat those keys as used
+rather than merely exposed until each provider's usage log says otherwise.
+
 ## Agent authentication
 
 Enrollment consumes a single-use key, which is revoked on success with the
@@ -68,6 +97,12 @@ are expired on a schedule by `app/workers/intent_expiry_runner.py`, so an
 approval window closes on time rather than whenever something happens to call
 the sweep.
 
+`app/services/endpoint_command_envelope.py` can sign an HMAC-SHA256 command
+envelope with a hard 3600-second TTL cap, but it is wired to nothing. Signing
+authority is not authorization: the intent allowlist is checked even for a
+valid signature, and there is no replay detection, so the nonce is signed but
+never stored.
+
 ## Safety invariants
 
 ```
@@ -88,4 +123,7 @@ No endpoint command execution or delivery.
 Identity is an API key, not a person.
 Tenant isolation applies to all tenant observation; reference knowledge is global and labelled.
 Sample corpus is labelled and is not live tenant data.
+A secret scan must cover full history and must redact; a working-tree scan reports clean over a live leak.
+Purging history does not revoke a credential. Only rotation does.
+A CI gate whose results cannot be observed is an unverified claim, not a passing build.
 ```
