@@ -8,6 +8,11 @@ Two conventions run through this file:
 * Every list response carries a :class:`Provenance` block naming which feeds
   contributed and which were unhealthy, so a dashboard can state that its
   numbers exclude a failing source instead of silently under-reporting.
+
+A third rule applies to identifiers. When a detail endpoint looks a record up
+by primary key, the corresponding list schema must expose that key. Omitting it
+does not hide the record; it just leaves the client with no way to reach the
+detail view, which is how a list and its detail page drift apart.
 """
 
 from __future__ import annotations
@@ -79,6 +84,8 @@ class ExploitOut(ORMModel):
 
 
 class VulnerabilityOut(ORMModel):
+    #: ``cve_id`` is the addressable key for this record; the detail route is
+    #: /vulnerabilities/{cve_id}, so no surrogate id is published.
     cve_id: str
     title: str | None = None
     description: str | None = None
@@ -115,6 +122,7 @@ class VulnerabilityDetail(VulnerabilityOut):
 
 
 class RansomwareVictimOut(ORMModel):
+    id: str
     display_name: str
     canonical_key: str
     domain: str | None = None
@@ -132,6 +140,8 @@ class RansomwareVictimOut(ORMModel):
 
 
 class ThreatActorOut(ORMModel):
+    #: Required by the console: /actors/{actor_id} resolves on this value.
+    id: str
     canonical_name: str
     display_name: str
     aliases: list[str] = Field(default_factory=list)
@@ -150,6 +160,8 @@ class ThreatActorOut(ORMModel):
 
 
 class IndicatorOut(ORMModel):
+    #: Required by the console: /iocs/{indicator_id} resolves on this value.
+    id: str
     indicator_type: str
     value: str
     #: ``None`` = not yet enriched. This is a real, displayable state.
@@ -282,6 +294,12 @@ class ApiKeyOut(ORMModel):
     expires_at: datetime | None = None
     last_used_at: datetime | None = None
     created_at: datetime
+
+    #: A revoked key stays listed. Withholding the reason would leave the
+    #: record of what once had access without the record of why it was taken
+    #: away, so both are published.
+    revoked_at: datetime | None = None
+    revoked_reason: str | None = None
 
 
 class ApiKeyCreate(BaseModel):
