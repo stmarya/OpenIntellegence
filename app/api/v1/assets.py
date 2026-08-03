@@ -347,6 +347,31 @@ async def heartbeat(
     )
 
 
+@router.get("/agents/{agent_id}", response_model=AgentOut, summary="One endpoint agent")
+async def get_agent(agent_id: str, db: DbSession, principal: ReadPrincipal) -> AgentOut:
+    """Read one agent fresh, rather than reusing a row from the fleet list.
+
+    ``last_heartbeat_at`` is the field most likely to be consulted here, and it
+    is the field where a stale copy does the most damage: it is the difference
+    between an endpoint that checked in a minute ago and one that stopped
+    reporting an hour ago. A heartbeat records last contact, not current
+    health, so this endpoint deliberately returns the stored status rather than
+    deriving a liveness verdict.
+    """
+    agent = (
+        await db.execute(
+            select(Agent).where(
+                Agent.id == agent_id, Agent.tenant_id == principal.tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+
+    if agent is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found.")
+
+    return AgentOut.model_validate(agent)
+
+
 @router.get("/agents/{agent_id}/software", summary="Installed software for an agent")
 async def agent_software(
     agent_id: str, db: DbSession, principal: ReadPrincipal

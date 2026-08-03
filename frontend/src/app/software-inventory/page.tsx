@@ -9,11 +9,13 @@ import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Software inventory' };
 
+/** Mirrors AgentOut in app/api/schemas.py. */
 type AgentRow = {
   id: string;
   asset_id?: string | null;
   os_family?: string | null;
   version?: string | null;
+  status?: string | null;
   last_heartbeat_at?: string | null;
 };
 
@@ -26,6 +28,16 @@ const columns: Column<AgentRow>[] = [
   { key: 'asset', header: 'Asset', render: (row) => <>{unknown(row.asset_id)}</> },
   { key: 'os', header: 'Platform', render: (row) => <>{unknown(row.os_family)}</> },
   { key: 'version', header: 'Agent version', render: (row) => <>{unknown(row.version)}</> },
+  {
+    key: 'status',
+    header: 'Agent state',
+    render: (row) =>
+      row.status === 'active' ? (
+        <StatusChip label="Active" tone="approved" />
+      ) : (
+        <StatusChip label={row.status ?? 'Unknown'} tone="unknown" />
+      ),
+  },
   {
     key: 'inventory',
     header: 'Last contact',
@@ -67,8 +79,15 @@ export default async function SoftwareInventoryPage({ searchParams }: { searchPa
         caption="Vendor names taken from public vulnerability feeds are never treated as installed software."
       />
       <p className="muted">
-        CPE matching between installed packages and CVEs is not performed. No endpoint reports a match state, so no
-        exposure figure is derived here; asset-level exposure is on the <Link href="/assets">asset surface</Link>.
+        CPE matching does run: each heartbeat carrying an inventory recomputes that asset&apos;s exposure, and every
+        resulting row records the join that produced it, so a false positive can be traced to its rule. Coverage is
+        still partial, because a package reported without a CPE identifier cannot be matched at all and is counted as
+        unmatched on the agent page rather than passed over silently.
+      </p>
+      <p className="muted">
+        No exposure figure is derived on this page, since an agent count and a vulnerability count answer different
+        questions. Asset-level exposure, including the matching basis for each CVE, is on the{' '}
+        <Link href="/assets">asset surface</Link>.
       </p>
     </section>
   );
