@@ -7,6 +7,7 @@ import { fetchJson, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
 
+/** Mirrors CampaignOut in app/api/v1/domains.py. */
 type CampaignDetail = {
   id?: string;
   name?: string | null;
@@ -115,6 +116,10 @@ export default async function CampaignDetailPage({
         </>
       ) : null}
 
+      <p className="muted">
+        Campaigns are shared reference knowledge, not tenant observation: the record carries no tenant column and is
+        identical for every tenant. A campaign appearing here says nothing about whether it has touched your estate.
+      </p>
       <p className="muted">
         Relationship, graph, timeline, and history sections are not shown. The campaign endpoint returns flat name
         references with no typed edges and keeps no revision log, so those sections could only ever render empty.
