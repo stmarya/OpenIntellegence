@@ -1,0 +1,43 @@
+# Mock connector overlay.
+#
+# Deliberately a separate file rather than a service inside the main
+# docker-compose.yml: the development stack must not silently gain a
+# fake Slack, Jira, and SIEM. Opt in explicitly:
+#
+#   docker compose -f docker-compose.yml \
+#                  -f dev/mock-connector/docker-compose.mock.yml up
+#
+# Then point the connector settings at it:
+#
+#   SLACK_WEBHOOK_URL=http://mock-connector:1080/mock/slack/webhook
+#   JIRA_BASE_URL=http://mock-connector:1080/mock/jira
+#   SIEM_WEBHOOK_URL=http://mock-connector:1080/mock/siem/events
+#
+# NEVER set these in a deployed environment. A green connector health
+# reading against this service means the mock answered, not that Slack,
+# Jira, or the SIEM is reachable.
+
+services:
+  mock-connector:
+    image: mockserver/mockserver:5.15.0
+    container_name: openintelligence-mock-connector
+    ports:
+      - "1080:1080"
+    environment:
+      MOCKSERVER_INITIALIZATION_JSON_PATH: /config/mock-connector.json
+      MOCKSERVER_LOG_LEVEL: WARN
+      MOCKSERVER_WATCH_INITIALIZATION_JSON: "true"
+    volumes:
+      - ./dev/mock-connector:/config:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "java",
+          "-cp",
+          "/mockserver-netty-jar-with-dependencies.jar",
+          "-version",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
