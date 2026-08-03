@@ -35,6 +35,7 @@ export default async function GraphPage({ searchParams }: { searchParams?: Searc
   const outcome = entityType && entityId
     ? await fetchJson<GraphPayload>(`/graph/traverse?${query.toString()}`)
     : null;
+  const graphKey = `${entityType}:${entityId}:${depth}:${maxEdges}:${minConfidence}:${relationshipTypes}`;
 
   return (
     <section className="content graph-page">
@@ -94,7 +95,7 @@ export default async function GraphPage({ searchParams }: { searchParams?: Searc
           <p>The seed exists as the requested pivot, but no visible typed edge was returned. This is not presented as a clean intelligence assessment.</p>
         </div>
       ) : outcome?.status === 'ok' ? (
-        <InvestigationGraph graph={outcome.data} />
+        <InvestigationGraph key={graphKey} graph={outcome.data} />
       ) : null}
     </section>
   );

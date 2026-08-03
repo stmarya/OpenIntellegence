@@ -25,6 +25,7 @@ The response contains stable node keys, typed edges, confidence, evidence, sourc
 - A relationship remains evidence, not automatic incident confirmation.
 - Visual position is presentation state and never changes the intelligence relationship.
 - Traversal is capped at three hops and 500 edges to protect the API and browser.
+- Any response containing `synthetic_test_only` evidence shows a prominent test-data warning and carries that warning into report-summary copy and browser snapshots.
 
 ## Frontend workflow
 
@@ -32,11 +33,30 @@ The `/graph` page accepts an entity type and identifier, renders a deterministic
 
 ## Development fixture
 
-After migrations and tenant bootstrap, seed a small, connected, labelled test graph:
+Prepare the development environment from the repository root:
+
+```bash
+cp .env.example .env
+python -m app.agent_gateway.bootstrap_ca --out ./certs
+docker compose up -d postgres redis
+
+docker compose run --rm api alembic upgrade head
+docker compose run --rm api python -m app.cli.bootstrap_tenant \
+  --slug acme \
+  --name "ACME Security"
+```
+
+Copy the one-time key printed by bootstrap into `.env` as `API_SERVICE_KEY`, then start or recreate the application services:
+
+```bash
+docker compose up --build -d
+```
+
+Seed a small, connected, labelled test graph:
 
 ```bash
 docker compose exec api python -m app.cli.seed_graph_demo \
-  --tenant-slug YOUR_TENANT_SLUG \
+  --tenant-slug acme \
   --confirm-synthetic
 ```
 
