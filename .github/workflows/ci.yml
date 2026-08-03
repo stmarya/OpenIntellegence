@@ -1,0 +1,93 @@
+name: CI
+
+# The first execution of this workflow is also the first time any code in
+# this repository is compiled or run. Failures on the initial runs are
+# expected and are the point: they are the backlog this gate exists to
+# surface. Do not add continue-on-error to make the badge green.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend - Python 3.12
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # app/api/schemas.py uses PEP 695 generics (class ListResponse[T]),
+          # so 3.12 is a hard floor, not a preference.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install application and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Byte-compile every module
+        # Catches syntax errors in modules that no test imports. A module can
+        # be unreachable from the test suite and still be served in production.
+        run: python -m compileall -q app tests alembic
+
+      - name: Lint
+        run: ruff check app tests
+
+      - name: Test
+        run: pytest -q
+
+  frontend:
+    name: Frontend - Next.js 14
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        # npm install rather than npm ci: the repository has no committed
+        # lockfile yet. Once one is committed this should become npm ci so
+        # the build is reproducible.
+        run: npm install --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        # The 53 route surfaces have never been type-checked. This is the
+        # step most likely to fail first.
+        run: npm run type-check
+
+      - name: Build
+        # Every route declares `export const dynamic = 'force-dynamic'`, so
+        # the build does not need a reachable API to succeed.
+        run: npm run build
+
+      - name: Test
+        run: npm run test:ci
