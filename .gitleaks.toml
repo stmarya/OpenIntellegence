@@ -1,0 +1,58 @@
+# gitleaks configuration for OpenIntelligence.
+#
+# Scope note: this repository is a threat-intelligence platform, so it legitimately
+# contains strings that LOOK like credentials -- hashes, indicator values, vendor
+# identifiers, CPE URIs. Allowlisting those is not weakening the scan; failing to
+# allowlist them produces a wall of false positives that trains everyone to ignore
+# the job, which is worse than having no job.
+
+title = "OpenIntelligence secret scanning"
+
+[extend]
+useDefault = true
+
+# --- Project-specific rules -------------------------------------------------
+
+[[rules]]
+id = "ransomware-live-api-key"
+description = "Ransomware.live API key (UUID sent as X-API-KEY)"
+regex = '''(?i)x[-_]?api[-_]?key["'\s:=]{1,12}[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'''
+tags = ["api-key", "ransomware.live"]
+
+[[rules]]
+id = "otx-api-key"
+description = "AlienVault OTX API key (64 hex chars assigned to an X-OTX-API-KEY header or OTX_API_KEY variable)"
+regex = '''(?i)(otx[-_]?api[-_]?key)["'\s:=]{1,12}[0-9a-f]{64}'''
+tags = ["api-key", "otx"]
+
+[[rules]]
+id = "hardcoded-api-key-assignment"
+description = "A literal assigned to an API_KEY-shaped identifier in source"
+regex = '''(?i)^\s*(api[-_]?key|apikey|secret[-_]?key|access[-_]?token|valid[-_]?key)\s*=\s*["'][^"'\s$]{16,}["']'''
+tags = ["api-key", "hardcoded"]
+
+# --- Allowlist --------------------------------------------------------------
+
+[allowlist]
+description = "Public threat-intelligence corpus and non-credential identifiers"
+
+paths = [
+  # Pinned public OTX/KEV/NVD corpus. These are published advisories, not
+  # tenant data and not credentials.
+  '''frontend/src/data/raw/.*''',
+  '''(.*?)(jpg|jpeg|png|gif|svg|ico|woff2?)$''',
+  # This config necessarily contains the patterns it searches for.
+  '''\.gitleaks\.toml$''',
+]
+
+regexes = [
+  # Placeholder and documentation values.
+  '''(?i)(your|example|placeholder|changeme|dummy|redacted|xxxx|<[a-z-]+>)''',
+  # Environment indirection is the correct pattern, not a finding.
+  '''os\.environ''',
+  '''process\.env''',
+  '''getenv''',
+  # Test fixture signing keys in the endpoint command envelope suite are
+  # deliberately fake and never authenticate against anything.
+  '''test-signing-key''',
+]
