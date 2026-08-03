@@ -38,6 +38,8 @@ const NAVIGATION_SECTIONS = [
     label: 'Investigations',
     items: [
       ['Alerts', '/alerts'],
+      ['Alert rules', '/alert-rules'],
+      ['Sightings', '/sightings'],
       ['Correlations', '/correlations'],
       ['Cases', '/cases'],
       ['Investigations', '/investigations'],
