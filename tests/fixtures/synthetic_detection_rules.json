@@ -1,0 +1,13 @@
+{
+  "fixture_kind": "synthetic_test_only",
+  "rules": [
+    {
+      "name": "Synthetic PowerShell download pattern",
+      "rule_format": "sigma",
+      "version": "1",
+      "attack_techniques": ["T1059.001"],
+      "content": "title: Synthetic test rule\nstatus: test\nlogsource:\n  product: windows\ndetection:\n  selection:\n    CommandLine|contains: 'Invoke-WebRequest'\n  condition: selection"
+    }
+  ],
+  "note": "Fixture for parser and UI tests only; not production detection content."
+}
