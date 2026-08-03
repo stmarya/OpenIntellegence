@@ -1,0 +1,8 @@
+{
+  "fixture_kind": "synthetic_test_only",
+  "question": "Which synthetic vulnerability is marked as known exploited?",
+  "expected_refs": ["CVE-2099-0001"],
+  "actual_refs": ["CVE-2099-0001"],
+  "grounded": true,
+  "note": "This is not tenant telemetry and must never appear in production UI."
+}
