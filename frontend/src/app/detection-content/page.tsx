@@ -31,7 +31,7 @@ const columns: Column<DetectionRow>[] = [
         <strong>{unknown(row.name)}</strong>
         <br />
         <small>
-          {unknown(row.content_format)} \u00b7 {row.external_id ?? 'no external id'} \u00b7 {row.version ?? 'unversioned'}
+          {unknown(row.content_format)} · {row.external_id ?? 'no external id'} · {row.version ?? 'unversioned'}
         </small>
       </>
     ),
