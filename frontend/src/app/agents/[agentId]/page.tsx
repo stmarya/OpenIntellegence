@@ -1,22 +1,35 @@
 import type { Metadata } from 'next';
-import type { Column } from '@/components/DataTable';
+import { DataTable, type Column } from '@/components/DataTable';
 import { DetailShell } from '@/components/DetailShell';
-import { ResourceTable } from '@/components/ResourceTable';
+import { StatusChip } from '@/components/StatusChip';
 import { TabNav, resolveTab, type TabDefinition } from '@/components/TabNav';
-import { pageMetaOf, readPageState, withPageQuery, type SearchParams } from '@/lib/pagination';
-import { fetchList, rowsOf, unknown } from '@/lib/server-fetch';
+import type { SearchParams } from '@/lib/pagination';
+import { fetchJson, unknown } from '@/lib/server-fetch';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Endpoint agent' };
 
-type SoftwareRow = {
-  id?: string | null;
+/**
+ * Mirrors the dict returned by agent_software in app/api/v1/assets.py.
+ *
+ * This endpoint does not use the ListResponse envelope: it returns a bare
+ * object with the inventory under `software`, and it does not paginate.
+ */
+type SoftwareItem = {
   name?: string | null;
-  vendor?: string | null;
   version?: string | null;
-  install_path?: string | null;
-  first_seen_at?: string | null;
-  last_seen_at?: string | null;
+  vendor?: string | null;
+  cpe_uri?: string | null;
+  first_seen?: string | null;
+  last_seen?: string | null;
+};
+
+type AgentSoftwareResponse = {
+  agent_id?: string | null;
+  asset_id?: string | null;
+  count?: number | null;
+  unmatched_count?: number | null;
+  software?: SoftwareItem[];
 };
 
 const TABS: TabDefinition[] = [
@@ -24,7 +37,7 @@ const TABS: TabDefinition[] = [
   { key: 'fleet', label: 'Fleet metadata' },
 ];
 
-const columns: Column<SoftwareRow>[] = [
+const columns: Column<SoftwareItem>[] = [
   {
     key: 'package',
     header: 'Package',
@@ -37,9 +50,20 @@ const columns: Column<SoftwareRow>[] = [
     ),
   },
   { key: 'version', header: 'Version', render: (row) => <>{unknown(row.version)}</> },
-  { key: 'path', header: 'Install path', render: (row) => <small>{row.install_path ?? 'Not reported'}</small> },
-  { key: 'first', header: 'First seen', render: (row) => <small>{row.first_seen_at ?? 'Not reported'}</small> },
-  { key: 'seen', header: 'Last seen', render: (row) => <small>{row.last_seen_at ?? 'Never reported'}</small> },
+  {
+    key: 'cpe',
+    header: 'CPE identifier',
+    render: (row) =>
+      row.cpe_uri ? (
+        <small>
+          <code>{row.cpe_uri}</code>
+        </small>
+      ) : (
+        <StatusChip label="No CPE" tone="unknown" />
+      ),
+  },
+  { key: 'first', header: 'First seen', render: (row) => <small>{row.first_seen ?? 'Not reported'}</small> },
+  { key: 'seen', header: 'Last seen', render: (row) => <small>{row.last_seen ?? 'Never reported'}</small> },
 ];
 
 export default async function AgentDetailPage({
@@ -52,8 +76,10 @@ export default async function AgentDetailPage({
   const { agentId } = params;
   const tab = resolveTab(TABS, searchParams?.tab);
   const basePath = `/agents/${encodeURIComponent(agentId)}`;
-  const state = readPageState(searchParams);
-  const software = await fetchList<SoftwareRow>(withPageQuery(`/agents/${agentId}/software`, state));
+  const outcome = await fetchJson<AgentSoftwareResponse>(`/agents/${encodeURIComponent(agentId)}/software`);
+  const record = outcome.status === 'ok' ? outcome.data : null;
+  const software = record?.software ?? [];
+  const unmatched = record?.unmatched_count ?? null;
 
   return (
     <DetailShell
@@ -61,21 +87,31 @@ export default async function AgentDetailPage({
       backLabel="Back to endpoint agents"
       title={`Agent ${agentId}`}
       intro="This view reads the software this agent last reported. It is a read surface only and offers no way to send a command to the endpoint."
-      outcome={software}
+      outcome={outcome}
     >
       <TabNav basePath={basePath} tabs={TABS} active={tab} />
 
       {tab === 'software' ? (
-        <ResourceTable
-          outcome={rowsOf(software)}
-          columns={columns}
-          rowKey={(row) => String(row.id ?? `${row.name}@${row.version}`)}
-          page={pageMetaOf(software)}
-          basePath={`${basePath}?tab=software`}
-          emptyTitle="No software reported"
-          emptyDetail="The API responded successfully and this agent has reported no software inventory. That means nothing was reported, not that the endpoint has no software installed."
-          caption="An inventory reflects the last successful report. A silent agent keeps showing its last known state, never an empty machine."
-        />
+        <>
+          {unmatched != null && unmatched > 0 ? (
+            <p className="banner">
+              {unmatched} of {record?.count ?? software.length} reported packages carry no CPE identifier. Those packages
+              cannot be matched against CVE data at all, so this agent&apos;s exposure count is a floor rather than a
+              complete assessment.
+            </p>
+          ) : null}
+          <DataTable
+            columns={columns}
+            rows={software}
+            rowKey={(row) => `${row.name ?? 'unnamed'}@${row.version ?? 'unversioned'}`}
+            emptyLabel="This agent has reported no software inventory. That means nothing was reported, not that the endpoint has no software installed."
+            caption="An inventory reflects the last successful report. A silent agent keeps showing its last known state, never an empty machine."
+          />
+          <p className="muted">
+            The full inventory is returned in one response; this endpoint does not paginate, so nothing is being withheld
+            below the last row.
+          </p>
+        </>
       ) : null}
 
       {tab === 'fleet' ? (
