@@ -19,14 +19,31 @@ def node_key(entity_type: str, entity_id: str) -> str:
     return f"{entity_type}:{entity_id}"
 
 
-def label_from_evidence(
-    evidence: dict,
-    side: str,
-    entity_id: str,
-) -> str:
+def label_from_evidence(evidence: dict, side: str, entity_id: str) -> str:
     """Use a persisted display label when one exists, otherwise keep the ID honest."""
     label = evidence.get(f"{side}_label")
     return str(label) if label not in (None, "") else entity_id
+
+
+def upsert_node(
+    nodes: dict[str, dict],
+    entity: tuple[str, str],
+    seed: tuple[str, str],
+    label: str,
+) -> None:
+    """Add a node and enrich an ID-only seed label from persisted evidence."""
+    key = node_key(*entity)
+    existing = nodes.get(key)
+    if existing is None:
+        nodes[key] = {
+            "key": key,
+            "entity_type": entity[0],
+            "entity_id": entity[1],
+            "label": label,
+            "is_seed": entity == seed,
+        }
+    elif existing["label"] == existing["entity_id"] and label != entity[1]:
+        existing["label"] = label
 
 
 @router.get("/graph/traverse")
@@ -42,7 +59,7 @@ async def traverse_graph(
 ) -> dict:
     """Traverse both inbound and outbound edges from a seed entity.
 
-    The endpoint deliberately caps depth and edge count. It returns only persisted
+    The endpoint caps depth and edge count. It returns only persisted
     relationships visible to the tenant; it never asks a model to invent a link.
     """
     allowed_relationships = {
@@ -90,6 +107,8 @@ async def traverse_graph(
             ),
             or_(*endpoint_conditions),
         ]
+        if edges:
+            filters.append(~EntityRelationship.id.in_(tuple(edges)))
         if allowed_relationships:
             filters.append(EntityRelationship.relationship_type.in_(allowed_relationships))
         if min_confidence > 0:
@@ -114,40 +133,29 @@ async def traverse_graph(
             source_key = node_key(*source)
             target_key = node_key(*target)
             evidence = relationship.evidence if isinstance(relationship.evidence, dict) else {}
-            nodes.setdefault(
-                source_key,
-                {
-                    "key": source_key,
-                    "entity_type": source[0],
-                    "entity_id": source[1],
-                    "label": label_from_evidence(evidence, "source", source[1]),
-                    "is_seed": source == seed,
-                },
+            upsert_node(
+                nodes,
+                source,
+                seed,
+                label_from_evidence(evidence, "source", source[1]),
             )
-            nodes.setdefault(
-                target_key,
-                {
-                    "key": target_key,
-                    "entity_type": target[0],
-                    "entity_id": target[1],
-                    "label": label_from_evidence(evidence, "target", target[1]),
-                    "is_seed": target == seed,
-                },
+            upsert_node(
+                nodes,
+                target,
+                seed,
+                label_from_evidence(evidence, "target", target[1]),
             )
-            edges.setdefault(
-                relationship.id,
-                {
-                    "id": relationship.id,
-                    "source": source_key,
-                    "target": target_key,
-                    "relationship_type": relationship.relationship_type,
-                    "confidence": relationship.confidence,
-                    "evidence": evidence,
-                    "sources": relationship.sources,
-                    "valid_from": relationship.valid_from,
-                    "valid_until": relationship.valid_until,
-                },
-            )
+            edges[relationship.id] = {
+                "id": relationship.id,
+                "source": source_key,
+                "target": target_key,
+                "relationship_type": relationship.relationship_type,
+                "confidence": relationship.confidence,
+                "evidence": evidence,
+                "sources": relationship.sources,
+                "valid_from": relationship.valid_from,
+                "valid_until": relationship.valid_until,
+            }
             if source not in visited:
                 next_frontier.add(source)
             if target not in visited:
