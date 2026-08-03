@@ -1,23 +1,35 @@
-# Local development stack.
-#
-# Passwords here are throwaway values for a laptop. Do not reuse this file
-# in any shared or production environment.
-
+# Complete local-development stack. Credentials below are throwaway laptop values.
 name: openintelligence
+
+x-app: &app
+  build: .
+  env_file:
+    - path: .env
+      required: false
+  environment: &app-env
+    ENVIRONMENT: development
+    DATABASE_URL: postgresql+asyncpg://openintel:openintel@postgres:5432/openintel
+    REDIS_URL: redis://redis:6379/0
+    AGENT_CA_CERT_PATH: /srv/app/certs/agent-ca.crt
+    AGENT_CA_KEY_PATH: /srv/app/certs/agent-ca.key
+  volumes:
+    - ./certs:/srv/app/certs:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
 
 services:
   postgres:
-    # TimescaleDB image already bundles the timescaledb extension; pgvector
-    # is installed by the init script below.
     image: timescale/timescaledb-ha:pg16
     environment:
       POSTGRES_USER: openintel
       POSTGRES_PASSWORD: openintel
       POSTGRES_DB: openintel
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U openintel -d openintel"]
       interval: 5s
@@ -26,65 +38,65 @@ services:
 
   redis:
     image: redis:7-alpine
-    # Persistence matters: the rate limiter keeps its sliding windows here,
-    # and losing them on restart briefly resets every tenant's quota.
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
-    volumes:
-      - redisdata:/data
+    ports: ["6379:6379"]
+    volumes: ["redisdata:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
 
+  api:
+    <<: *app
+    ports: ["8000:8000"]
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+
+  connector-worker:
+    <<: *app
+    command: ["python", "-m", "app.workers.connector_delivery"]
+
+  internal-worker:
+    <<: *app
+    command: ["python", "-m", "app.workers.internal_automation_runner"]
+
+  alert-worker:
+    <<: *app
+    command: ["python", "-m", "app.workers.alert_evaluation_runner"]
+
+  intent-expiry-worker:
+    <<: *app
+    command: ["python", "-m", "app.workers.intent_expiry_runner"]
+
+  frontend:
+    build: ./frontend
+    environment:
+      API_BASE_URL: http://api:8000/api/v1
+    ports: ["3000:3000"]
+    depends_on: [api]
+    restart: unless-stopped
+
+  # Reserved dependencies. They are available for the future search/object-store
+  # adapters but are not reported as application capabilities until wired.
   opensearch:
+    profiles: ["extended"]
     image: opensearchproject/opensearch:2.17.1
     environment:
       discovery.type: single-node
       DISABLE_SECURITY_PLUGIN: "true"
       OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
-    ports:
-      - "9200:9200"
-    volumes:
-      - opensearchdata:/usr/share/opensearch/data
+    ports: ["9200:9200"]
+    volumes: ["opensearchdata:/usr/share/opensearch/data"]
 
   minio:
+    profiles: ["extended"]
     image: minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: openintel
       MINIO_ROOT_PASSWORD: openintel123
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - miniodata:/data
-
-  api:
-    build: .
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      ENVIRONMENT: development
-      DATABASE_URL: postgresql+asyncpg://openintel:openintel@postgres:5432/openintel
-      REDIS_URL: redis://redis:6379/0
-      AGENT_CA_CERT_PATH: /srv/app/certs/agent-ca.crt
-      AGENT_CA_KEY_PATH: /srv/app/certs/agent-ca.key
-    env_file:
-      - path: .env
-        required: false
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./certs:/srv/app/certs:ro
-    command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["miniodata:/data"]
 
 volumes:
   pgdata:
