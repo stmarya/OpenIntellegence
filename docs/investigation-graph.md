@@ -33,12 +33,12 @@ The `/graph` page accepts an entity type and identifier, renders a deterministic
 
 ## Development fixture
 
-Prepare the development environment from the repository root:
+Prepare the database and application image from the repository root:
 
 ```bash
 cp .env.example .env
-python -m app.agent_gateway.bootstrap_ca --out ./certs
 docker compose up -d postgres redis
+docker compose build api frontend
 
 docker compose run --rm api alembic upgrade head
 docker compose run --rm api python -m app.cli.bootstrap_tenant \
@@ -51,6 +51,8 @@ Copy the one-time key printed by bootstrap into `.env` as `API_SERVICE_KEY`, the
 ```bash
 docker compose up --build -d
 ```
+
+Agent CA files are not required for graph testing. Create them separately before testing agent enrollment.
 
 Seed a small, connected, labelled test graph:
 

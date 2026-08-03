@@ -51,8 +51,8 @@ describe('InvestigationGraph', () => {
   it('selects a node and exposes its connected evidence', () => {
     render(<InvestigationGraph graph={syntheticGraph} />);
     fireEvent.click(screen.getByRole('button', { name: 'threat_actor: Synthetic actor' }));
-    expect(screen.getByText('Synthetic actor')).toBeInTheDocument();
-    expect(screen.getByText('attributed_to')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Synthetic actor' })).toBeInTheDocument();
+    expect(screen.getAllByText('attributed_to').length).toBeGreaterThan(0);
     expect(screen.getByText(/Confidence: 80%/)).toBeInTheDocument();
   });
 
