@@ -40,6 +40,7 @@ const WIDTH = 1080;
 const HEIGHT = 660;
 const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 const MAX_RENDERED_NODES = 120;
+const SYNTHETIC_FIXTURE = 'synthetic_test_only';
 
 const ROUTES: Record<string, string> = {
   asset: 'assets',
@@ -102,18 +103,29 @@ function download(filename: string, content: string, type: string): void {
 
 export function InvestigationGraph({ graph }: { graph: GraphPayload }) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const renderNodes = graph.nodes.slice(0, MAX_RENDERED_NODES);
-  const renderedKeys = useMemo(() => new Set(renderNodes.map((node) => node.key)), [renderNodes]);
+  const renderNodes = useMemo(
+    () => graph.nodes.slice(0, MAX_RENDERED_NODES),
+    [graph.nodes],
+  );
+  const renderedKeys = useMemo(
+    () => new Set(renderNodes.map((node) => node.key)),
+    [renderNodes],
+  );
   const positions = useMemo(() => buildPositions(renderNodes), [renderNodes]);
   const entityTypes = useMemo(
     () => [...new Set(renderNodes.map((node) => node.entity_type))].sort(),
     [renderNodes],
+  );
+  const containsSynthetic = useMemo(
+    () => graph.edges.some((edge) => edge.evidence.fixture_kind === SYNTHETIC_FIXTURE),
+    [graph.edges],
   );
   const [visibleTypes, setVisibleTypes] = useState(() => new Set(entityTypes));
   const [selectedKey, setSelectedKey] = useState(
     renderNodes.find((node) => node.is_seed)?.key ?? renderNodes[0]?.key ?? '',
   );
   const [zoom, setZoom] = useState(1);
+  const [notice, setNotice] = useState('');
   const selected = renderNodes.find((node) => node.key === selectedKey) ?? null;
   const visibleKeys = useMemo(
     () => new Set(renderNodes.filter((node) => visibleTypes.has(node.entity_type)).map((node) => node.key)),
@@ -141,6 +153,7 @@ export function InvestigationGraph({ graph }: { graph: GraphPayload }) {
       JSON.stringify(graph, null, 2),
       'application/json',
     );
+    setNotice('Complete evidence JSON exported.');
   }
 
   function exportSvg(): void {
@@ -151,34 +164,53 @@ export function InvestigationGraph({ graph }: { graph: GraphPayload }) {
       `<?xml version="1.0" encoding="UTF-8"?>\n${source}`,
       'image/svg+xml',
     );
+    setNotice('Current visual graph exported as SVG.');
   }
 
   function saveSnapshot(): void {
     const snapshot = {
+      fixture_kind: containsSynthetic ? SYNTHETIC_FIXTURE : null,
       saved_at: new Date().toISOString(),
       seed: graph.seed,
       depth: graph.depth_requested,
       nodes: graph.nodes.map((node) => node.key),
       edges: graph.edges.map((edge) => edge.id),
     };
-    localStorage.setItem(`openintel.graph.${graph.seed.entity_type}.${graph.seed.entity_id}`, JSON.stringify(snapshot));
+    localStorage.setItem(
+      `openintel.graph.${graph.seed.entity_type}.${graph.seed.entity_id}`,
+      JSON.stringify(snapshot),
+    );
+    setNotice('View references saved in this browser. Intelligence data remains server-owned.');
   }
 
   async function copyReportSummary(): Promise<void> {
     const lines = [
+      containsSynthetic ? 'WARNING: SYNTHETIC TEST DATA — NOT TENANT TELEMETRY' : null,
       `Investigation graph: ${graph.seed.entity_type} ${graph.seed.entity_id}`,
       `Basis: ${graph.basis}`,
       `Nodes: ${graph.nodes.length}; relationships: ${graph.edges.length}; depth: ${graph.depth_reached}`,
       ...graph.edges.slice(0, 50).map((edge) => {
-        const confidence = edge.confidence === null ? 'unknown confidence' : `${Math.round(edge.confidence * 100)}% confidence`;
+        const confidence = edge.confidence === null
+          ? 'unknown confidence'
+          : `${Math.round(edge.confidence * 100)}% confidence`;
         return `- ${edge.source} --${edge.relationship_type}--> ${edge.target} (${confidence}; sources: ${edge.sources.join(', ') || 'not recorded'})`;
       }),
-    ];
-    await navigator.clipboard.writeText(lines.join('\n'));
+    ].filter((line): line is string => line !== null);
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      setNotice('Evidence summary copied for a report draft. Verify citations before publishing.');
+    } catch {
+      setNotice('Clipboard access was refused by the browser. Export evidence JSON instead.');
+    }
   }
 
   return (
     <div className="graph-workspace">
+      {containsSynthetic ? (
+        <p className="banner graph-synthetic" role="alert">
+          SYNTHETIC TEST DATA — This graph contains development fixtures and is not tenant telemetry.
+        </p>
+      ) : null}
       <div className="graph-toolbar" aria-label="Graph controls">
         <button type="button" onClick={() => setZoom((value) => Math.min(1.8, value + 0.15))}>Zoom in</button>
         <button type="button" onClick={() => setZoom((value) => Math.max(0.45, value - 0.15))}>Zoom out</button>
@@ -189,6 +221,7 @@ export function InvestigationGraph({ graph }: { graph: GraphPayload }) {
         <button type="button" onClick={copyReportSummary}>Copy report summary</button>
         <span className="graph-counts">{graph.nodes.length} nodes · {graph.edges.length} edges · {graph.depth_reached} hops</span>
       </div>
+      {notice ? <p className="graph-notice" role="status">{notice}</p> : null}
 
       <div className="graph-filters" aria-label="Entity type filters">
         {entityTypes.map((entityType) => (

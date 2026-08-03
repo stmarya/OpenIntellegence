@@ -47,7 +47,7 @@ The API is then on `http://localhost:8000`, with interactive docs at
 Without Docker:
 
 ```bash
-python -m venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 alembic upgrade head
 uvicorn app.main:app --reload
