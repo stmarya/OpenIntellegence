@@ -27,7 +27,7 @@ const columns: Column<RequirementRow>[] = [
     render: (row) => (
       <>
         <strong>
-          {unknown(row.code)} \u2014 {unknown(row.title)}
+          {unknown(row.code)} — {unknown(row.title)}
         </strong>
         <br />
         <small>Owner: {row.owner ?? 'Unassigned'}</small>

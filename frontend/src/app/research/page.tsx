@@ -82,7 +82,7 @@ export default async function ResearchPage({ searchParams }: { searchParams?: Se
               <StatusChip label="Unverified" tone="unknown" />
               <p>{record.description}</p>
               <small>
-                Source: {record.provenance.sourceFile} \u00b7 {record.updatedAt}
+                Source: {record.provenance.sourceFile} · {record.updatedAt}
               </small>
             </article>
           ))

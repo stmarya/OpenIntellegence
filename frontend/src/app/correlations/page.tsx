@@ -31,7 +31,7 @@ const columns: Column<CorrelationRow>[] = [
         </Link>
         <br />
         <small>
-          {unknown(row.primary_entity_type)} \u00b7 {unknown(row.primary_entity_id)}
+          {unknown(row.primary_entity_type)} · {unknown(row.primary_entity_id)}
         </small>
       </>
     ),
