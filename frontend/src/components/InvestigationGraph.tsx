@@ -35,12 +35,24 @@ export type GraphPayload = {
 };
 
 type Position = { x: number; y: number };
+type LocalSnapshot = {
+  fixture_kind: string | null;
+  saved_at: string;
+  seed: GraphPayload['seed'];
+  depth: number;
+  nodes: string[];
+  edges: string[];
+  selected_key: string;
+  visible_types: string[];
+  zoom: number;
+};
 
 const WIDTH = 1080;
 const HEIGHT = 660;
 const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 const MAX_RENDERED_NODES = 120;
 const SYNTHETIC_FIXTURE = 'synthetic_test_only';
+const SNAPSHOT_PREFIX = 'openintel.graph';
 
 const ROUTES: Record<string, string> = {
   asset: 'assets',
@@ -101,6 +113,10 @@ function download(filename: string, content: string, type: string): void {
   URL.revokeObjectURL(url);
 }
 
+function snapshotKey(graph: GraphPayload): string {
+  return `${SNAPSHOT_PREFIX}.${graph.seed.entity_type}.${graph.seed.entity_id}`;
+}
+
 export function InvestigationGraph({ graph }: { graph: GraphPayload }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const renderNodes = useMemo(
@@ -158,29 +174,69 @@ export function InvestigationGraph({ graph }: { graph: GraphPayload }) {
 
   function exportSvg(): void {
     if (!svgRef.current) return;
-    const source = new XMLSerializer().serializeToString(svgRef.current);
+    const clone = svgRef.current.cloneNode(true) as SVGSVGElement;
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    style.textContent = `
+      .graph-edge{stroke:#657181;stroke-width:1.2;opacity:.72}
+      .graph-edge-label{fill:#8793A3;font-size:9px;paint-order:stroke;stroke:#0A0C0F;stroke-width:3px}
+      .graph-node circle{stroke:#0A0C0F;stroke-width:4}
+      .graph-node-active circle{stroke:#fff;stroke-width:5}
+      .graph-node-label{fill:#E7EAF0;font:700 10px Arial;paint-order:stroke;stroke:#0A0C0F;stroke-width:3px}
+      .graph-node-type{fill:#9AA4B2;font:8px Arial;paint-order:stroke;stroke:#0A0C0F;stroke-width:3px}
+    `;
+    clone.prepend(style);
+    const source = new XMLSerializer().serializeToString(clone);
     download(
       `cti-graph-${safeFilePart(graph.seed.entity_id)}.svg`,
       `<?xml version="1.0" encoding="UTF-8"?>\n${source}`,
       'image/svg+xml',
     );
-    setNotice('Current visual graph exported as SVG.');
+    setNotice('Current visual graph exported as a self-contained SVG.');
   }
 
   function saveSnapshot(): void {
-    const snapshot = {
+    const snapshot: LocalSnapshot = {
       fixture_kind: containsSynthetic ? SYNTHETIC_FIXTURE : null,
       saved_at: new Date().toISOString(),
       seed: graph.seed,
       depth: graph.depth_requested,
       nodes: graph.nodes.map((node) => node.key),
       edges: graph.edges.map((edge) => edge.id),
+      selected_key: selectedKey,
+      visible_types: [...visibleTypes],
+      zoom,
     };
-    localStorage.setItem(
-      `openintel.graph.${graph.seed.entity_type}.${graph.seed.entity_id}`,
-      JSON.stringify(snapshot),
-    );
-    setNotice('View references saved in this browser. Intelligence data remains server-owned.');
+    try {
+      localStorage.setItem(snapshotKey(graph), JSON.stringify(snapshot));
+      setNotice('Local view saved. Intelligence evidence remains server-owned.');
+    } catch {
+      setNotice('The browser refused local storage. Export evidence JSON instead.');
+    }
+  }
+
+  function restoreSnapshot(): void {
+    try {
+      const raw = localStorage.getItem(snapshotKey(graph));
+      if (!raw) {
+        setNotice('No local view exists for this seed entity.');
+        return;
+      }
+      const snapshot = JSON.parse(raw) as LocalSnapshot;
+      const sameSeed = snapshot.seed.entity_type === graph.seed.entity_type
+        && snapshot.seed.entity_id === graph.seed.entity_id;
+      if (!sameSeed || !Array.isArray(snapshot.visible_types)) {
+        setNotice('The local view is invalid for this seed and was not restored.');
+        return;
+      }
+      const restoredTypes = snapshot.visible_types.filter((value) => entityTypes.includes(value));
+      setVisibleTypes(new Set(restoredTypes));
+      if (renderedKeys.has(snapshot.selected_key)) setSelectedKey(snapshot.selected_key);
+      if (Number.isFinite(snapshot.zoom)) setZoom(Math.min(1.8, Math.max(0.45, snapshot.zoom)));
+      setNotice(`Local view restored from ${snapshot.saved_at}. Evidence was reloaded from the server.`);
+    } catch {
+      setNotice('The saved local view is unreadable and was not restored.');
+    }
   }
 
   async function copyReportSummary(): Promise<void> {
@@ -217,7 +273,8 @@ export function InvestigationGraph({ graph }: { graph: GraphPayload }) {
         <button type="button" onClick={() => setZoom(1)}>Fit view</button>
         <button type="button" onClick={exportSvg}>Export SVG</button>
         <button type="button" onClick={exportJson}>Export evidence JSON</button>
-        <button type="button" onClick={saveSnapshot}>Save local snapshot</button>
+        <button type="button" onClick={saveSnapshot}>Save local view</button>
+        <button type="button" onClick={restoreSnapshot}>Restore local view</button>
         <button type="button" onClick={copyReportSummary}>Copy report summary</button>
         <span className="graph-counts">{graph.nodes.length} nodes · {graph.edges.length} edges · {graph.depth_reached} hops</span>
       </div>
