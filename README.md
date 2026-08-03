@@ -167,6 +167,35 @@ records and figures rather than failing.
 
 ---
 
+## Investigation graph
+
+The analyst console includes `/graph`, a tenant-scoped visual canvas over
+persisted typed CTI relationships. It supports one-to-three-hop traversal,
+confidence and relationship filters, node pivots, evidence inspection, local
+view snapshots, report-summary copy, and SVG/JSON export. No model-generated
+edge is presented as fact.
+
+For an explicitly labelled development graph after migrations and tenant
+bootstrap:
+
+```bash
+docker compose exec api python -m app.cli.seed_graph_demo \
+  --tenant-slug YOUR_TENANT_SLUG \
+  --confirm-synthetic
+```
+
+Then open:
+
+```text
+http://localhost:3000/graph?entity_type=campaign&entity_id=synthetic-campaign-night-glass&depth=3
+```
+
+Every fixture edge is marked `synthetic_test_only`; the seed command is
+idempotent and refuses to run in production. See
+`docs/investigation-graph.md` for the API contract and verification steps.
+
+---
+
 ## Selected endpoints
 
 | Method | Path | Scope |
@@ -186,6 +215,7 @@ records and figures rather than failing.
 | `GET` | `/api/v1/feeds` | `read` |
 | `GET` | `/api/v1/quarantine` | `read` |
 | `POST` | `/api/v1/ingest/{source}/run` | `admin` |
+| `GET` | `/api/v1/graph/traverse` | `read` |
 | `POST` | `/api/v1/chat/query` | `read` |
 | `POST` | `/api/v1/reports/generate` | `report.write` |
 
