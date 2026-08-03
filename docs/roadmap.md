@@ -1,63 +1,33 @@
 # Roadmap and status
 
-## Complete
+## Implemented in source
 
-### P0 — foundation
+- P0 foundation: migrations, normalized ingest, `/api/v1`, mTLS gateway, API keys, CI and security scanning.
+- CTI and console: tenant-aware intelligence, assets, alerts, cases, investigations, reports, and 54+ route surfaces.
+- Runtime: API, frontend, connector delivery, internal automation, alert evaluation, and intent expiry services.
+- Write workbench: eight allowlisted operations behind server credentials and an independent operator token.
+- Priority foundation: users, roles, assignments, sessions, typed relationships, revisions, saved searches, global search, connector checkpoints, safe inventory commands, AI evaluations, and detection rules.
+- Operations: request IDs, bounded Prometheus metrics, dependency readiness, backup/restore scripts, dependency updates, SBOM inventory, and container scanning.
 
-Schema and migrations, source normalization across 14 feeds, REST `/api/v1`,
-agent gateway, API key service with authentication and rate limiting, initial AI
-layer.
+## Important boundaries
 
-### Detection and correlation
-
-Tenant-filtered bounded rule evaluation, cooldown and fingerprint idempotency,
-evidence resolver limits, feed health without operational leakage, unknown CVSS
-preserved, AI withholding behaviour test.
-
-### Automation reliability and endpoint request control
-
-Capability gating wired into creation, proposal and dispatch; 422 before
-persistence; internal action separation; endpoint intents excluded from
-automation; dead-letter replay with fresh idempotency. Intent expiry now runs on
-a schedule via `app/workers/intent_expiry_runner.py`.
-
-### Console
-
-Global shell, 53 route surfaces, shared component library, safe empty and
-unavailable states, server-side fetch boundary, snapshot-backed repositories,
-control-plane-only endpoint intent surface.
-
-### Schema reconciliation
-
-Seven defects found by reading each page against the schema it consumes, rather
-than against the schema it assumed. Two of them had pages denying evidence they
-had already fetched, and one rendered every malware family as having no
-capabilities. Pattern recorded in `docs/frontend.md`: verify the response
-envelope and the field types before writing the consuming type.
-
-## Not built
-
-These are absent by decision or by dependency, and the console names each gap
-rather than faking it.
-
-| Item | Blocks |
+| Capability | Current boundary |
 | --- | --- |
-| Typed relationship edges | Relationship and graph tabs on every entity |
-| Per-entity revision history | History and timeline tabs |
-| Advisory entity | `/advisories` is gated |
-| Collection, detection-content, requirement, ransomware-group detail endpoints | Detail routes for those four |
-| User and role model | Any per-person attribution |
-| Cross-tenant sharing | The sharing surface states its absence |
-| Write surfaces (create case, create investigation, acknowledge alert, trigger ingest, quarantine replay) | The console is read-only |
-| Endpoint command delivery | Intents remain recorded decisions |
+| Human identity | User/role/session persistence exists; API keys still authenticate requests. OIDC/SAML verification and MFA ceremony are not wired. |
+| Endpoint commands | Only `collect_inventory` is publishable. No arbitrary shell, destructive response, or runtime-configurable allowlist exists. |
+| Relationships | Typed edge and revision persistence/API exist; historical entities are not backfilled automatically. |
+| Search | Database exact/substring search is available. OpenSearch indexing and ranking are not wired. |
+| Connector replay | Checkpoint persistence exists. Record-level quarantine replay needs connector-specific normalization entry points. |
+| AI governance | Citation enforcement and evaluation records exist. A complete golden-set evaluation runner and approval UI remain. |
+| Detection engineering | Sigma/YARA/Suricata/Snort storage exists. Format-specific compilers and deployment adapters remain. |
+| Production | No build, migration, CI, restore, or deployment outcome has been observed from this environment. |
 
-## Next
+## Next verification gate
 
-1. **Validation sweep. Nothing in this repository has ever been compiled or executed.** `ruff`, `pytest`, `alembic upgrade head`, `npm run lint`, `npm run type-check`, `next build`. Requires Python 3.12+ (PEP 695 generics in `app/api/schemas.py`).
-2. Continue reading the remaining API modules against their consuming pages: `workflows.py`, `correlations.py`, `governance.py`. Defect density so far is roughly one per file.
-3. Backend work for the eight items above, in dependency order — typed edges and revision history unblock the most console surface.
-4. Write surfaces, once a scope model beyond a read key exists.
-5. Connector configuration for development, then production hardening.
+1. Python 3.12 compile, Ruff, pytest, Alembic single-head and upgrade.
+2. Frontend dependency install, lint, type-check, tests, and production build.
+3. Compose startup, tenant bootstrap, user/role creation, agent enrollment, heartbeat, command poll, search, graph, AI evaluation, and detection-rule smoke paths.
+4. Backup and destructive restore drill against a disposable database.
+5. Commit `frontend/package-lock.json`, then replace `npm install` with `npm ci`.
 
-"Code complete" is not "ready", and this document will not describe it as ready
-until the project builds.
+Source presence is not runtime health. This roadmap does not call the platform production-ready.
