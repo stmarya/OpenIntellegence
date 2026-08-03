@@ -8,18 +8,33 @@ import { fetchJson, unknown } from '@/lib/server-fetch';
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Connectors' };
 
+/**
+ * Mirrors FeedStatus in app/api/schemas.py. The API reports the outcome of the
+ * most recent run and when that run happened; it does not track the last
+ * *successful* run separately, so this type does not pretend otherwise.
+ */
 type FeedRow = {
   source?: string | null;
+  label?: string | null;
   status?: string | null;
   last_run_at?: string | null;
-  last_success_at?: string | null;
   records_ingested?: number | null;
   records_quarantined?: number | null;
   error_message?: string | null;
 };
 
 const columns: Column<FeedRow>[] = [
-  { key: 'source', header: 'Connector', render: (row) => <strong>{unknown(row.source)}</strong> },
+  {
+    key: 'source',
+    header: 'Connector',
+    render: (row) => (
+      <>
+        <strong>{unknown(row.label ?? row.source)}</strong>
+        <br />
+        <small>{unknown(row.source)}</small>
+      </>
+    ),
+  },
   {
     key: 'status',
     header: 'Last run outcome',
@@ -34,12 +49,10 @@ const columns: Column<FeedRow>[] = [
   },
   {
     key: 'runs',
-    header: 'Last run / last success',
+    header: 'Last run',
     render: (row) => (
       <>
-        {unknown(row.last_run_at)}
-        <br />
-        <small>{row.last_success_at ?? 'No successful run recorded'}</small>
+        {row.status === 'never_run' ? 'Never run' : unknown(row.last_run_at)}
       </>
     ),
   },
@@ -81,8 +94,11 @@ export default async function ConnectorsPage() {
         caption="Quarantined records are kept and replayable, never silently discarded."
       />
       <p className="muted">
-        A successful run means records were accepted, not that the upstream source was complete or correct. Rejected
-        records are counted here and itemised under <Link href="/data-quality">data quality</Link>.
+        Only the most recent run is recorded per connector. A failing run replaces the record of the successful one
+        before it, so this table cannot say how long a connector has been broken, and a green outcome here is not
+        evidence of sustained health. A successful run also means records were accepted, not that the upstream source
+        was complete or correct — rejected records are counted here and itemised under{' '}
+        <Link href="/data-quality">data quality</Link>.
       </p>
     </section>
   );

@@ -32,6 +32,13 @@ th,td{padding:10px;text-align:left;border-bottom:1px solid var(--edge);vertical-
 .state h2{margin:0 0 6px;font-size:14px}
 .state-error{border-color:#D6383D}
 .state-gated{border-left:3px solid var(--accent)}
+.state-empty{border-style:dashed}
+.state-loading{opacity:.75}
+.pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin:12px 0 0;padding-top:10px;border-top:1px solid var(--edge)}
+.pagination p{margin:0}
+.pagination a{display:inline-block;color:var(--accent);text-decoration:none;padding:4px 8px;border:1px solid var(--edge);border-radius:var(--radius);transition:background var(--motion) ease,color var(--motion) ease}
+.pagination a:hover{background:var(--panel);color:var(--text)}
+.pagination>span>.muted{display:inline-block;padding:4px 8px;border:1px solid transparent;opacity:.55}
 .timeline{list-style:none;margin:12px 0;padding:0;display:grid;gap:8px}
 .timeline li{border-left:2px solid var(--edge);padding:0 0 0 12px;display:grid;gap:2px}
 .timeline li strong{font-weight:700}
