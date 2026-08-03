@@ -28,8 +28,47 @@ The response contains stable node keys, typed edges, confidence, evidence, sourc
 
 ## Frontend workflow
 
-The `/graph` page accepts an entity type and identifier, renders a deterministic visual layout, supports node selection and evidence inspection, allows pivoting from any discovered node, and can export the current evidence graph. The page states when the API is unavailable, the result is empty, or the response was truncated.
+The `/graph` page accepts an entity type and identifier, renders a deterministic visual layout, supports node selection and evidence inspection, allows pivoting from any discovered node, filters entity and relationship types, re-centres the graph, and exports SVG or complete evidence JSON. A local snapshot stores only presentation references in the browser. The page states when the API is unavailable, the result is empty, or the response was truncated.
 
-## Testing boundary
+## Development fixture
 
-Use labelled synthetic relationships in development or tests. Synthetic nodes and edges must never be displayed as tenant telemetry without a visible test/demo label.
+After migrations and tenant bootstrap, seed a small, connected, labelled test graph:
+
+```bash
+docker compose exec api python -m app.cli.seed_graph_demo \
+  --tenant-slug YOUR_TENANT_SLUG \
+  --confirm-synthetic
+```
+
+Then open:
+
+```text
+http://localhost:3000/graph?entity_type=campaign&entity_id=synthetic-campaign-night-glass&depth=3
+```
+
+The command is idempotent, refuses to run when `ENVIRONMENT=production`, and marks every edge with:
+
+```json
+{
+  "fixture_kind": "synthetic_test_only",
+  "note": "Synthetic graph evidence for development testing; not tenant telemetry."
+}
+```
+
+It never creates a tenant and never creates credentials.
+
+## Verification checklist
+
+```bash
+python -m compileall -q app tests alembic
+ruff check app tests
+pytest -q
+cd frontend
+npm install
+npm run lint
+npm run type-check
+npm run test:ci
+npm run build
+```
+
+Runtime and CI success must be reported only from observable command or check output.

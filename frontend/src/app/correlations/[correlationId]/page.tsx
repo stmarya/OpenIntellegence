@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { DetailShell } from '@/components/DetailShell';
 import { FieldTable, type Field } from '@/components/FieldTable';
 import { RiskBadge } from '@/components/RiskBadge';
@@ -31,6 +32,9 @@ export default async function CorrelationDetailPage({ params }: { params: { corr
   const outcome = await fetchJson<CorrelationDetail>(`/correlations/${encodeURIComponent(params.correlationId)}`);
   const record = outcome.status === 'ok' ? outcome.data : null;
   const briefs = record?.ai_briefs ?? [];
+  const graphHref = record?.primary_entity_type && record.primary_entity_id
+    ? `/graph?entity_type=${encodeURIComponent(record.primary_entity_type)}&entity_id=${encodeURIComponent(record.primary_entity_id)}&depth=2`
+    : null;
 
   const fields: Field[] = record
     ? [
@@ -80,6 +84,9 @@ export default async function CorrelationDetailPage({ params }: { params: { corr
       intro="The score comes from a deterministic factor breakdown, so an analyst can reproduce it by hand. Automation candidates are proposals awaiting human approval; nothing here dispatches an action."
       outcome={outcome}
     >
+      {graphHref ? (
+        <p><Link href={graphHref}>Open primary entity in investigation graph</Link></p>
+      ) : null}
       <FieldTable fields={fields} />
       <h2>Factor breakdown</h2>
       {factors.length > 0 ? (
