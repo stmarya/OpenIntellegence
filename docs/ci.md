@@ -20,7 +20,7 @@ failures are the backlog.
 | Install | `pip install -e ".[dev]"` | Unsatisfiable or conflicting dependency pins |
 | Compile | `python -m compileall -q app tests alembic` | Syntax errors in modules no test imports |
 | Lint | `ruff check app tests` | `E`, `F`, `I`, `UP`, `B`, `SIM` per `pyproject.toml` |
-| Test | `pytest -q` | The 22 test modules under `tests/` |
+| Test | `pytest -q` | The test modules under `tests/` |
 
 Python 3.12 is a hard floor. `app/api/schemas.py` declares
 `class ListResponse[T](BaseModel)`, which is PEP 695 syntax and is a syntax
@@ -50,6 +50,31 @@ The build does not require a reachable API. Every route declares
 `unavailable` outcome rather than throwing when `API_BASE_URL` is not an
 absolute URL.
 
+`npm install` is used rather than `npm ci` because no `package-lock.json` is
+committed. `npm ci` would fail outright without one. The cost is that every
+run resolves dependencies afresh, so the frontend job is not reproducible
+between runs and neither is the `npm audit` step in the Security workflow.
+Committing a lockfile is the fix and is still outstanding.
+
+## Companion workflow: Security
+
+`.github/workflows/security.yml` is a separate gate, documented in full in
+[`security-scanning.md`](./security-scanning.md). Three jobs:
+
+| Job | Tool | Scope |
+|---|---|---|
+| `secrets` | gitleaks 8.21.2 | Every commit reachable from the ref, via `fetch-depth: 0` |
+| `python-dependencies` | `pip-audit --strict` | Backend dependency advisories |
+| `node-dependencies` | `npm audit --audit-level=high` | Frontend dependency advisories |
+
+It runs on push to `main`, on pull requests, weekly on a schedule, and on
+demand. The schedule matters: a dependency that was clean when it merged
+becomes vulnerable when an advisory is published, not when the code changes.
+
+None of it requires GitHub Advanced Security, which is **not** enabled on this
+repository. That constraint is what shaped the design rather than something
+that blocked it.
+
 ## Deliberately not included
 
 **The pinned route list from the original CI attempt.** PR #2 shipped a
@@ -64,10 +89,28 @@ revision graph has a single head, which is the failure mode that actually
 occurred. A real migration job belongs with the dev-environment work, not
 here.
 
-**Secret and dependency scanning.** Both require GitHub Advanced Security,
-which is not enabled on this repository. This remains an open P0 item, along
-with rotating the leaked Ransomware.live API key and purging it from the
-`NogoSecV3.1.1` git history.
+## Outstanding P0 item
+
+One item remains open, and no workflow in this repository can close it.
+
+Credentials for **three providers** — Ransomware.live, AlienVault OTX, and
+VulnCheck — were committed in plaintext to the public `NogoSecV3.1.1`
+repository, across seven files, and are present on its **default branch head**
+rather than only in old history. `SECURITY.md` in that repository carries the
+remediation runbook and `scripts/purge-leaked-credentials.sh` performs the
+history rewrite.
+
+Rotation is the only step that revokes an attacker's access, and it can only
+be performed by the account holder in each provider's console. Rewriting
+history reduces retrievability; it does not un-leak anything already taken.
+Until all three keys are rotated, this item is open regardless of what the
+scanners report here.
+
+## Reading the results
+
+Workflow outcomes are readable only in the GitHub Actions tab. No claim that
+CI is passing should be made from any other source, and none is made in this
+repository's documentation.
 
 ## Rule
 
