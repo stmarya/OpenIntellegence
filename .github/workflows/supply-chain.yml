@@ -30,7 +30,7 @@ jobs:
       - name: Export frontend dependency tree
         working-directory: frontend
         run: npm ls --all --json > ../frontend-dependencies.json || test -s ../frontend-dependencies.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dependency-inventory
           path: |
