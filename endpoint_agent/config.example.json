@@ -1,0 +1,7 @@
+{
+  "api_base_url": "https://api.example.invalid/api/v1",
+  "state_dir": "./agent-state",
+  "heartbeat_seconds": 60,
+  "inventory_every": 60,
+  "request_timeout": 30
+}
