@@ -339,30 +339,39 @@ async def get_actor(actor_id: str, db: DbSession, principal: ReadPrincipal) -> A
     if actor is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Threat actor not found.")
 
-    key = (getattr(actor, "slug", None) or getattr(actor, "name", None) or "").lower()
+    # ThreatActor stores canonical_name, display_name and aliases. An earlier
+    # version resolved the match key with getattr(actor, "slug") or
+    # getattr(actor, "name"), neither of which exists on the model, so the key
+    # was always empty and every actor reported that it had no name to match
+    # against. Leak-site group names are stored lowercased.
+    alias_keys = {alias.lower() for alias in (actor.aliases or []) if alias}
+    if actor.canonical_name:
+        alias_keys.add(actor.canonical_name.lower())
+    match_keys = sorted(alias_keys)
 
     victims: list[RansomwareVictim] = []
-    if key:
+    if match_keys:
         victims = list(
             (
                 await db.execute(
                     select(RansomwareVictim)
-                    .where(RansomwareVictim.group_name == key)
+                    .where(RansomwareVictim.group_name.in_(match_keys))
                     .order_by(RansomwareVictim.discovered_at.desc())
                     .limit(50)
                 )
             ).scalars().all()
         )
         basis = (
-            f"Victims are matched where the leak-site group name equals '{key}'. "
-            "A victim published under a different alias for the same actor will "
-            "not appear here, and appearing here is an attacker claim rather than "
-            "a confirmed breach."
+            "Victims are matched where the leak-site group name equals the "
+            "actor's canonical name or one of its recorded aliases ("
+            f"{', '.join(match_keys)}). A victim published under an alias that "
+            "is not recorded here will not appear, and appearing here is an "
+            "attacker claim rather than a confirmed breach."
         )
     else:
         basis = (
-            "This actor record carries no name or slug to match leak-site victims "
-            "against, so no victim list is claimed for it."
+            "This actor record carries no canonical name or alias to match "
+            "leak-site victims against, so no victim list is claimed for it."
         )
 
     return ActorDetail(
